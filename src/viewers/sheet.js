@@ -290,16 +290,22 @@ export default class SheetViewer {
   exports() {
     const name = baseName(this.ctx.rec.name);
     return [
-      { label: 'Planilha Excel', icon: 'sheet', hint: '.xlsx', run: () => XLSX.writeFile(this.wb, `${name}.xlsx`) },
+      { label: 'Planilha Excel', icon: 'sheet', hint: '.xlsx', run: () => this.saveBook('xlsx', name) },
       {
         label: `Aba "${this.active}" em CSV`,
         icon: 'file-text',
         hint: '.csv',
         run: () => download(new Blob(['﻿' + XLSX.utils.sheet_to_csv(this.ws)], { type: 'text/csv;charset=utf-8' }), `${name} - ${this.active}.csv`),
       },
-      { label: 'OpenDocument', icon: 'sheet', hint: '.ods', run: () => XLSX.writeFile(this.wb, `${name}.ods`, { bookType: 'ods' }) },
+      { label: 'OpenDocument', icon: 'sheet', hint: '.ods', run: () => this.saveBook('ods', name) },
       ...(this.ctx.blob ? ['-', { label: 'Arquivo original', icon: 'download', run: () => download(this.ctx.blob, this.ctx.rec.name) }] : []),
     ];
+  }
+
+  saveBook(bookType, name) {
+    const data = XLSX.write(this.wb, { bookType, type: 'array' });
+    const mime = bookType === 'ods' ? 'application/vnd.oasis.opendocument.spreadsheet' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    return download(new Blob([data], { type: mime }), `${name}.${bookType}`);
   }
 
   destroy() {

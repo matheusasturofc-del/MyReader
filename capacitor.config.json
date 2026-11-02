@@ -1,0 +1,9 @@
+{
+  "appId": "com.matheusasturo.myreader",
+  "appName": "MyReader",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#f6f5f2"
+  }
+}

@@ -309,7 +309,7 @@ export default class DocViewer {
         },
       });
     }
-    items.push({ label: 'PDF / Imprimir', icon: 'printer', hint: 'PDF', run: () => this.print() });
+    if (!window.Capacitor?.isNativePlatform?.()) items.push({ label: 'PDF / Imprimir', icon: 'printer', hint: 'PDF', run: () => this.print() });
     if (!this.plain) {
       items.push({
         label: 'Página da web',

@@ -43,7 +43,22 @@ npm run build     # gera a versão final em dist/
 npm run preview   # serve a versão final
 ```
 
-### Publicar e usar no celular
+### 📱 APK para Android
+
+Baixe e instale: **https://github.com/matheusasturofc-del/MyReader/releases/latest/download/MyReader.apk**
+
+O APK é gerado automaticamente pelo GitHub Actions (`.github/workflows/android.yml`) a cada push,
+usando [Capacitor](https://capacitorjs.com). Para gerar localmente (precisa do Android SDK):
+
+```bash
+npm run build && npx cap sync android
+cd android && ./gradlew assembleDebug   # APK em android/app/build/outputs/apk/debug/
+```
+
+> ⚠️ Não abra o `index.html` do repositório direto no navegador — ele é o código-fonte e precisa
+> ser compilado. Use o APK, `npm run dev` ou o site publicado.
+
+### Publicar como site
 
 O repositório já tem um workflow (`.github/workflows/deploy.yml`) que publica no **GitHub Pages**
 a cada push na branch `main`. Basta ativar em *Settings → Pages → Source: GitHub Actions*.

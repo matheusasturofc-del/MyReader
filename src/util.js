@@ -61,6 +61,11 @@ export function formatDate(ts) {
 }
 
 export function download(blob, filename) {
+  if (window.Capacitor?.isNativePlatform?.()) {
+    return import('./native.js')
+      .then((m) => m.saveNative(blob, filename))
+      .catch((e) => import('./ui.js').then(({ toast }) => toast(`Não foi possível salvar: ${e?.message || e}`, { type: 'error', timeout: 5000 })));
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

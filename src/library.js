@@ -53,7 +53,8 @@ export async function createNew(kind) {
 function pickFiles(multiple = true) {
   const inp = document.createElement('input');
   inp.type = 'file';
-  inp.accept = ACCEPT;
+  // No app Android o seletor do sistema filtra mal por extensão: mostra tudo.
+  if (!window.Capacitor?.isNativePlatform?.()) inp.accept = ACCEPT;
   inp.multiple = multiple;
   inp.onchange = async () => {
     const recs = await importFiles([...inp.files]);

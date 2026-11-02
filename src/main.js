@@ -25,7 +25,12 @@ function route() {
         go('/');
       }
     } else {
-      await renderLibrary(app);
+      try {
+        await renderLibrary(app);
+      } catch (err) {
+        console.error(err);
+        app.innerHTML = `<div class="error-box"><strong>Não foi possível abrir a biblioteca</strong><p>${String(err?.message || err)}</p><p>Se estiver numa aba anônima, o navegador pode bloquear o armazenamento local.</p></div>`;
+      }
     }
   });
 }
@@ -71,6 +76,6 @@ if ('launchQueue' in window) {
 }
 
 // Service worker (offline / instalar como app)
-if (import.meta.env.PROD) {
+if (import.meta.env.PROD && !window.Capacitor?.isNativePlatform?.() && location.protocol === 'https:') {
   import('virtual:pwa-register').then(({ registerSW }) => registerSW({ immediate: true })).catch(() => {});
 }

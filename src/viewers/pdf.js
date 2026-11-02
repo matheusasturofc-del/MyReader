@@ -1,7 +1,7 @@
 // Leitor de PDF (pdf.js) com camada de texto selecionável, anotações por página,
 // marca-texto sobre o texto, busca, miniaturas e exportação com anotações.
-import * as pdfjsLib from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './pdf-textlayer.css';
 import { h, esc, download, baseName, clamp, debounce, canvasToBlob } from '../util.js';
 import { icon } from '../icons.js';

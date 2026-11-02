@@ -18,7 +18,40 @@
     </script>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <!-- Tela de abertura: aparece até o app carregar (e mostra o erro, se houver). -->
+      <div id="boot" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;font-family:system-ui,sans-serif;background:#f6f5f2;color:#1b1b1f;text-align:center;padding:24px">
+        <img src="./icon.svg" width="88" height="88" alt="" style="border-radius:22px;box-shadow:0 10px 30px -8px rgba(109,93,252,.6)">
+        <div style="font-size:22px;font-weight:700">MyReader</div>
+        <div id="boot-msg" style="color:#6e6e79;font-size:15px;max-width:420px">Carregando…</div>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var shown = false;
+        function fail(msg) {
+          if (shown) return;
+          var el = document.getElementById('boot-msg');
+          if (!el) return; // o app já carregou
+          shown = true;
+          el.style.color = '#e5484d';
+          el.innerHTML = msg;
+        }
+        if (location.protocol === 'file:') {
+          fail('Este arquivo é o <b>código-fonte</b> do app e não abre direto do computador.<br><br>Use o <b>APK</b> (Android) ou o site publicado — veja o README do projeto.');
+        }
+        window.addEventListener('error', function (e) {
+          fail('Erro ao iniciar: ' + (e.message || 'desconhecido') + '<br><br>Tente atualizar o navegador / WebView do Android.');
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason;
+          if (document.getElementById('boot')) fail('Erro ao iniciar: ' + ((r && r.message) || r));
+        });
+        setTimeout(function () {
+          fail('O app está demorando para abrir. Verifique se o navegador está atualizado (Chrome/WebView recente) e recarregue a página.');
+        }, 15000);
+      })();
+    </script>
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>
