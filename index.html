@@ -11,6 +11,12 @@
     <link rel="apple-touch-icon" href="./icon-192.png" />
     <title>MyReader</title>
     <script>
+      // No GitHub Pages este arquivo é o código-fonte: redireciona para a versão compilada (app/).
+      if (/\.github\.io$/.test(location.hostname) && !/\/app\//.test(location.pathname)) {
+        location.replace(location.pathname.replace(/\/(index\.html)?$/, '/') + 'app/' + location.hash);
+      }
+    </script>
+    <script>
       try {
         const t = localStorage.getItem('mr-theme');
         if (t) document.documentElement.dataset.theme = t;
