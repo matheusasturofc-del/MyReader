@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["./web-oPqzGwEI.js","./dist-CHwR9-Kj.js"])))=>i.map(i=>d[i]);
+import{registerPlugin as e}from"./dist-CHwR9-Kj.js";import{t}from"./preload-helper-CRzLMJPS.js";var n=e(`Share`,{web:()=>t(()=>import(`./web-oPqzGwEI.js`).then(e=>new e.ShareWeb),__vite__mapDeps([0,1]),import.meta.url)});export{n as Share};
