@@ -1,0 +1,698 @@
+// Motor de anotações: caneta, marca-texto, borracha, texto e formas.
+// Cada "página" (PDF, imagem, partitura, folha do caderno...) recebe uma AnnotationLayer
+// com 3 canvas: marca-texto (mix-blend multiply = efeito real de marca-texto),
+// tinta (caneta/texto/formas) e um canvas "ao vivo" que recebe os toques.
+// As coordenadas são guardadas em unidades relativas: largura da página = 1000.
+
+import { clamp } from './util.js';
+
+export const UNIT = 1000;
+
+export const PALETTES = {
+  pen: ['#1b1b1f', '#3b5bdb', '#e03131', '#2f9e44', '#f08c00', '#9c36b5', '#ffffff'],
+  highlighter: ['#ffe14d', '#a5f37a', '#7fdcff', '#ff9ecb', '#ffb86b', '#c9a7ff'],
+};
+
+const DEFAULTS = {
+  pen: { color: '#1b1b1f', size: 3 },
+  highlighter: { color: '#ffe14d', size: 18, mode: 'free' },
+  text: { color: '#1b1b1f', size: 18 },
+  shape: { color: '#e03131', size: 3, kind: 'rect' },
+  eraser: { size: 14 },
+};
+
+export const DRAW_TOOLS = new Set(['pen', 'highlighter', 'eraser', 'text', 'shape']);
+
+/** Estado global da ferramenta atual (compartilhado entre páginas). */
+export class ToolState extends EventTarget {
+  constructor() {
+    super();
+    let saved = {};
+    try {
+      saved = JSON.parse(localStorage.getItem('mr-tools') || '{}');
+    } catch {}
+    this.tool = 'read';
+    this.settings = structuredClone(DEFAULTS);
+    for (const k of Object.keys(this.settings)) Object.assign(this.settings[k], saved[k] || {});
+  }
+  set(tool) {
+    this.tool = tool;
+    this.dispatchEvent(new Event('change'));
+  }
+  update(tool, patch) {
+    Object.assign(this.settings[tool], patch);
+    try {
+      localStorage.setItem('mr-tools', JSON.stringify(this.settings));
+    } catch {}
+    this.dispatchEvent(new Event('change'));
+  }
+  get s() {
+    return this.settings[this.tool] || {};
+  }
+}
+
+/** Desfazer/refazer para as anotações. */
+export class History extends EventTarget {
+  constructor() {
+    super();
+    this.undoStack = [];
+    this.redoStack = [];
+  }
+  push(entry) {
+    this.undoStack.push(entry);
+    if (this.undoStack.length > 200) this.undoStack.shift();
+    this.redoStack = [];
+    this.emit();
+  }
+  undo() {
+    const e = this.undoStack.pop();
+    if (!e) return false;
+    e.undo();
+    this.redoStack.push(e);
+    this.emit();
+    return true;
+  }
+  redo() {
+    const e = this.redoStack.pop();
+    if (!e) return false;
+    e.redo();
+    this.undoStack.push(e);
+    this.emit();
+    return true;
+  }
+  get canUndo() {
+    return this.undoStack.length > 0;
+  }
+  get canRedo() {
+    return this.redoStack.length > 0;
+  }
+  emit() {
+    this.dispatchEvent(new Event('change'));
+  }
+}
+
+// ---------------------------------------------------------------- desenho
+
+function hexToRgba(hex, a) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function smoothPath(ctx, pts, k) {
+  const n = pts.length / 3;
+  ctx.beginPath();
+  ctx.moveTo(pts[0] * k, pts[1] * k);
+  if (n === 1) {
+    ctx.lineTo(pts[0] * k + 0.01, pts[1] * k);
+    return;
+  }
+  for (let i = 1; i < n - 1; i++) {
+    const x = pts[i * 3] * k,
+      y = pts[i * 3 + 1] * k;
+    const nx = pts[(i + 1) * 3] * k,
+      ny = pts[(i + 1) * 3 + 1] * k;
+    ctx.quadraticCurveTo(x, y, (x + nx) / 2, (y + ny) / 2);
+  }
+  ctx.lineTo(pts[(n - 1) * 3] * k, pts[(n - 1) * 3 + 1] * k);
+}
+
+function drawPen(ctx, s, k) {
+  const pts = s.pts;
+  const n = pts.length / 3;
+  ctx.strokeStyle = s.c;
+  ctx.fillStyle = s.c;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (!s.pr || n < 3) {
+    ctx.lineWidth = s.w * k;
+    smoothPath(ctx, pts, k);
+    ctx.stroke();
+    return;
+  }
+  // Traço com pressão: segmentos curvos com largura variável.
+  let px = pts[0] * k,
+    py = pts[1] * k;
+  for (let i = 1; i < n; i++) {
+    const x = pts[i * 3] * k,
+      y = pts[i * 3 + 1] * k;
+    const p = pts[i * 3 + 2];
+    const last = i === n - 1;
+    const ex = last ? x : (x + pts[(i + 1) * 3] * k) / 2;
+    const ey = last ? y : (y + pts[(i + 1) * 3 + 1] * k) / 2;
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.quadraticCurveTo(x, y, ex, ey);
+    ctx.lineWidth = Math.max(0.6, s.w * k * (0.35 + p * 1.3));
+    ctx.stroke();
+    px = ex;
+    py = ey;
+  }
+}
+
+function drawHighlighter(ctx, s, k) {
+  ctx.strokeStyle = s.c;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = s.w * k;
+  smoothPath(ctx, s.pts, k);
+  ctx.stroke();
+}
+
+function drawHlRects(ctx, s, k) {
+  ctx.fillStyle = s.c;
+  for (const [x, y, w, hh] of s.rects) {
+    const r = Math.min(3 * k, (hh * k) / 4);
+    ctx.beginPath();
+    ctx.roundRect(x * k, y * k, w * k, hh * k, r);
+    ctx.fill();
+  }
+}
+
+function drawShape(ctx, s, k) {
+  ctx.strokeStyle = s.c;
+  ctx.lineWidth = s.w * k;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const x1 = s.x1 * k,
+    y1 = s.y1 * k,
+    x2 = s.x2 * k,
+    y2 = s.y2 * k;
+  ctx.beginPath();
+  if (s.kind === 'rect') {
+    ctx.roundRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1), 4 * k);
+  } else if (s.kind === 'ellipse') {
+    ctx.ellipse((x1 + x2) / 2, (y1 + y2) / 2, Math.abs(x2 - x1) / 2, Math.abs(y2 - y1) / 2, 0, 0, Math.PI * 2);
+  } else {
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    if (s.kind === 'arrow') {
+      const a = Math.atan2(y2 - y1, x2 - x1);
+      const L = Math.max(12 * k, s.w * k * 4);
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - L * Math.cos(a - 0.45), y2 - L * Math.sin(a - 0.45));
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - L * Math.cos(a + 0.45), y2 - L * Math.sin(a + 0.45));
+    }
+  }
+  ctx.stroke();
+}
+
+export const TEXT_FONT = '"Inter Variable", Inter, system-ui, sans-serif';
+
+function drawText(ctx, s, k) {
+  ctx.fillStyle = s.c;
+  ctx.font = `500 ${s.s * k}px ${TEXT_FONT}`;
+  ctx.textBaseline = 'top';
+  const lines = s.text.split('\n');
+  lines.forEach((ln, i) => ctx.fillText(ln, s.x * k, s.y * k + i * s.s * 1.3 * k));
+}
+
+/** Desenha um conjunto de formas. layer: 'hl' (marca-texto) ou 'ink'. */
+export function drawShapes(ctx, shapes, k, layer) {
+  for (const s of shapes) {
+    const isHl = s.t === 'hl' || s.t === 'hlrect';
+    if ((layer === 'hl') !== isHl) continue;
+    ctx.save();
+    if (s.t === 'pen') drawPen(ctx, s, k);
+    else if (s.t === 'hl') drawHighlighter(ctx, s, k);
+    else if (s.t === 'hlrect') drawHlRects(ctx, s, k);
+    else if (s.t === 'shape') drawShape(ctx, s, k);
+    else if (s.t === 'text') drawText(ctx, s, k);
+    ctx.restore();
+  }
+}
+
+/**
+ * Renderiza as anotações de uma página em canvases de tamanho arbitrário (exportação).
+ * Retorna { hl, ink } — o 'hl' deve ser composto com "multiply".
+ */
+export function renderShapesToCanvases(shapes, width, height) {
+  const k = width / UNIT;
+  const mk = () => {
+    const c = document.createElement('canvas');
+    c.width = Math.round(width);
+    c.height = Math.round(height);
+    return c;
+  };
+  const hl = mk(),
+    ink = mk();
+  drawShapes(hl.getContext('2d'), shapes, k, 'hl');
+  drawShapes(ink.getContext('2d'), shapes, k, 'ink');
+  return { hl, ink };
+}
+
+// ---------------------------------------------------------------- hit test
+
+function distToSeg(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1,
+    dy = y2 - y1;
+  const l2 = dx * dx + dy * dy;
+  let t = l2 ? ((px - x1) * dx + (py - y1) * dy) / l2 : 0;
+  t = clamp(t, 0, 1);
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function hit(s, x, y, r) {
+  if (s.t === 'pen' || s.t === 'hl') {
+    const p = s.pts;
+    const rr = r + s.w / 2;
+    if (p.length === 3) return Math.hypot(x - p[0], y - p[1]) < rr;
+    for (let i = 3; i < p.length; i += 3) {
+      if (distToSeg(x, y, p[i - 3], p[i - 2], p[i], p[i + 1]) < rr) return true;
+    }
+    return false;
+  }
+  if (s.t === 'hlrect') return s.rects.some(([rx, ry, w, hh]) => x > rx - r && x < rx + w + r && y > ry - r && y < ry + hh + r);
+  if (s.t === 'text') return x > s.x - r && x < s.x + (s.bw || 50) + r && y > s.y - r && y < s.y + (s.bh || s.s) + r;
+  if (s.t === 'shape') {
+    const { x1, y1, x2, y2 } = s;
+    const rr = r + s.w / 2;
+    if (s.kind === 'line' || s.kind === 'arrow') return distToSeg(x, y, x1, y1, x2, y2) < rr;
+    if (s.kind === 'ellipse') {
+      const cx = (x1 + x2) / 2,
+        cy = (y1 + y2) / 2,
+        rx = Math.abs(x2 - x1) / 2 || 1,
+        ry = Math.abs(y2 - y1) / 2 || 1;
+      const d = Math.hypot((x - cx) / rx, (y - cy) / ry);
+      return Math.abs(d - 1) * Math.min(rx, ry) < rr;
+    }
+    const minx = Math.min(x1, x2),
+      maxx = Math.max(x1, x2),
+      miny = Math.min(y1, y2),
+      maxy = Math.max(y1, y2);
+    return (
+      distToSeg(x, y, minx, miny, maxx, miny) < rr ||
+      distToSeg(x, y, maxx, miny, maxx, maxy) < rr ||
+      distToSeg(x, y, maxx, maxy, minx, maxy) < rr ||
+      distToSeg(x, y, minx, maxy, minx, miny) < rr
+    );
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------- gerenciador
+
+/**
+ * Coordena todas as camadas de um documento: ferramenta, histórico, persistência,
+ * e gestos de dois dedos (rolar/zoom) enquanto se desenha no celular/tablet.
+ */
+export class AnnotationManager {
+  constructor({ tools, history, pages = {}, onChange, scroller }) {
+    this.tools = tools;
+    this.history = history;
+    this.pages = pages; // { [key]: shapes[] }
+    this.onChange = onChange;
+    this.layers = new Map();
+    this.scroller = scroller;
+    this.penSeen = false;
+    this._onTool = () => this.layers.forEach((l) => l.updateMode());
+    tools.addEventListener('change', this._onTool);
+  }
+  attach(host, key) {
+    const old = this.layers.get(key);
+    if (old && old.host === host) {
+      old.resize();
+      return old;
+    }
+    old?.destroy();
+    const layer = new AnnotationLayer(this, host, key);
+    this.layers.set(key, layer);
+    return layer;
+  }
+  detach(key) {
+    this.layers.get(key)?.destroy();
+    this.layers.delete(key);
+  }
+  shapes(key) {
+    return (this.pages[key] ||= []);
+  }
+  setShapes(key, shapes) {
+    this.pages[key] = shapes;
+    if (!shapes.length) delete this.pages[key];
+    this.layers.get(key)?.redraw();
+    this.onChange?.();
+  }
+  /** Altera as formas de uma página registrando no histórico. */
+  commit(key, next) {
+    const before = this.shapes(key).slice();
+    this.setShapes(key, next);
+    this.history.push({
+      undo: () => this.setShapes(key, before.slice()),
+      redo: () => this.setShapes(key, next.slice()),
+    });
+  }
+  add(key, shape) {
+    this.commit(key, [...this.shapes(key), shape]);
+  }
+  hasAny() {
+    return Object.values(this.pages).some((s) => s.length);
+  }
+  clearAll() {
+    const snapshot = structuredClone(this.pages);
+    const keys = Object.keys(snapshot);
+    if (!keys.length) return;
+    keys.forEach((k) => this.setShapes(k, []));
+    this.history.push({
+      undo: () => keys.forEach((k) => this.setShapes(k, snapshot[k].slice())),
+      redo: () => keys.forEach((k) => this.setShapes(k, [])),
+    });
+  }
+  resizeAll() {
+    this.layers.forEach((l) => l.resize());
+  }
+  destroy() {
+    this.tools.removeEventListener('change', this._onTool);
+    this.layers.forEach((l) => l.destroy());
+    this.layers.clear();
+  }
+}
+
+export class AnnotationLayer {
+  constructor(manager, host, key) {
+    this.m = manager;
+    this.host = host;
+    this.key = key;
+    this.hl = this.mkCanvas('ann-hl');
+    this.ink = this.mkCanvas('ann-ink');
+    this.live = this.mkCanvas('ann-live');
+    this.current = null;
+    this.ro = new ResizeObserver(() => this.resize());
+    this.ro.observe(host);
+    this.bind();
+    this.resize();
+    this.updateMode();
+  }
+  mkCanvas(cls) {
+    const c = document.createElement('canvas');
+    c.className = `ann-canvas ${cls}`;
+    this.host.appendChild(c);
+    return c;
+  }
+  get shapes() {
+    return this.m.shapes(this.key);
+  }
+  get k() {
+    return this.w / UNIT;
+  }
+  resize() {
+    const w = this.host.clientWidth,
+      hh = this.host.clientHeight;
+    if (!w || !hh) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    if (w === this.w && hh === this.h && dpr === this.dpr) return;
+    this.w = w;
+    this.h = hh;
+    this.dpr = dpr;
+    for (const c of [this.hl, this.ink, this.live]) {
+      c.width = Math.round(w * dpr);
+      c.height = Math.round(hh * dpr);
+    }
+    this.redraw();
+  }
+  ctx(c) {
+    const x = c.getContext('2d');
+    x.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    return x;
+  }
+  redraw() {
+    if (!this.w) return;
+    for (const [c, layer] of [
+      [this.hl, 'hl'],
+      [this.ink, 'ink'],
+    ]) {
+      const x = this.ctx(c);
+      x.clearRect(0, 0, this.w, this.h);
+      drawShapes(x, this.shapes, this.k, layer);
+    }
+  }
+  updateMode() {
+    const t = this.m.tools;
+    const active = DRAW_TOOLS.has(t.tool) && !(t.tool === 'highlighter' && t.settings.highlighter.mode === 'text');
+    this.live.classList.toggle('active', active);
+    this.live.dataset.tool = active ? t.tool : '';
+  }
+
+  // ----------------------------------------------------------- entrada
+  pos(e) {
+    const r = this.live.getBoundingClientRect();
+    return [((e.clientX - r.left) * UNIT) / r.width, ((e.clientY - r.top) * UNIT) / r.width];
+  }
+  bind() {
+    const el = this.live;
+    el.addEventListener('pointerdown', (e) => this.down(e));
+    el.addEventListener('pointermove', (e) => this.move(e));
+    el.addEventListener('pointerup', (e) => this.up(e));
+    el.addEventListener('pointercancel', () => this.cancel());
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  down(e) {
+    const m = this.m;
+    if (e.pointerType === 'pen') m.penSeen = true;
+    // Rejeição da palma: se já usou caneta stylus, o dedo não desenha.
+    if (e.pointerType === 'touch' && (m.penSeen || !e.isPrimary)) {
+      this.cancel();
+      return;
+    }
+    if (e.button > 0) return;
+    e.preventDefault();
+    const tool = m.tools.tool;
+    const s = m.tools.settings;
+    const [x, y] = this.pos(e);
+    this.live.setPointerCapture(e.pointerId);
+    this.pointerId = e.pointerId;
+    const pr = e.pointerType === 'pen' ? e.pressure || 0.5 : 0.5;
+    if (tool === 'pen') {
+      this.current = { t: 'pen', c: s.pen.color, w: s.pen.size, pts: [x, y, pr], pr: e.pointerType === 'pen' ? 1 : 0 };
+    } else if (tool === 'highlighter') {
+      this.current = { t: 'hl', c: s.highlighter.color, w: s.highlighter.size, pts: [x, y, 0.5] };
+      this.hlStart = [x, y];
+    } else if (tool === 'shape') {
+      this.current = { t: 'shape', kind: s.shape.kind, c: s.shape.color, w: s.shape.size, x1: x, y1: y, x2: x, y2: y };
+    } else if (tool === 'eraser') {
+      this.eraseBefore = this.shapes.slice();
+      this.erasing = true;
+      this.eraseAt(x, y);
+    } else if (tool === 'text') {
+      this.textDown = [x, y];
+    }
+    this.drawLive();
+  }
+  move(e) {
+    if (e.pointerId !== this.pointerId) {
+      if (this.m.tools.tool === 'eraser') this.drawEraserCursor(e);
+      return;
+    }
+    const [x, y] = this.pos(e);
+    const c = this.current;
+    if (this.erasing) {
+      this.eraseAt(x, y);
+      this.drawEraserCursor(e);
+      return;
+    }
+    if (!c) return;
+    if (c.t === 'pen' || c.t === 'hl') {
+      const events = e.getCoalescedEvents?.() || [e];
+      for (const ev of events) {
+        const [cx, cy] = this.pos(ev);
+        const p = c.pts;
+        const lx = p[p.length - 3],
+          ly = p[p.length - 2];
+        if (Math.hypot(cx - lx, cy - ly) < 0.6) continue;
+        if (c.t === 'hl' && e.shiftKey) {
+          // Shift = linha reta horizontal
+          c.pts = [this.hlStart[0], this.hlStart[1], 0.5, cx, this.hlStart[1], 0.5];
+        } else p.push(+cx.toFixed(2), +cy.toFixed(2), ev.pointerType === 'pen' ? ev.pressure || 0.5 : 0.5);
+      }
+    } else if (c.t === 'shape') {
+      c.x2 = x;
+      c.y2 = y;
+    }
+    this.drawLive();
+  }
+  up(e) {
+    if (e.pointerId !== this.pointerId) return;
+    this.pointerId = null;
+    if (this.erasing) {
+      this.erasing = false;
+      this.clearLive();
+      const before = this.eraseBefore;
+      const after = this.shapes.slice();
+      if (before.length !== after.length) {
+        this.m.history.push({
+          undo: () => this.m.setShapes(this.key, before.slice()),
+          redo: () => this.m.setShapes(this.key, after.slice()),
+        });
+        this.m.onChange?.();
+      }
+      return;
+    }
+    if (this.textDown) {
+      const [x, y] = this.textDown;
+      this.textDown = null;
+      this.openTextEditor(x, y);
+      return;
+    }
+    const c = this.current;
+    this.current = null;
+    this.clearLive();
+    if (!c) return;
+    if (c.t === 'shape' && Math.hypot(c.x2 - c.x1, c.y2 - c.y1) < 3) return;
+    if (c.t === 'shape') ['x1', 'y1', 'x2', 'y2'].forEach((k) => (c[k] = +c[k].toFixed(2)));
+    this.m.add(this.key, c);
+  }
+  cancel() {
+    this.current = null;
+    this.erasing = false;
+    this.textDown = null;
+    this.pointerId = null;
+    this.clearLive();
+  }
+  clearLive() {
+    if (!this.w) return;
+    this.ctx(this.live).clearRect(0, 0, this.w, this.h);
+  }
+  drawLive() {
+    const c = this.current;
+    if (!c || !this.w) return;
+    const x = this.ctx(this.live);
+    x.clearRect(0, 0, this.w, this.h);
+    if (c.t === 'hl') {
+      // Prévia translúcida; ao soltar entra no canvas "multiply".
+      x.globalAlpha = 0.55;
+      drawHighlighter(x, c, this.k);
+    } else drawShapes(x, [c], this.k, 'ink');
+  }
+  drawEraserCursor(e) {
+    if (!this.w) return;
+    const x = this.ctx(this.live);
+    x.clearRect(0, 0, this.w, this.h);
+    const r = this.live.getBoundingClientRect();
+    const rad = (this.m.tools.settings.eraser.size * this.k) / 1;
+    x.beginPath();
+    x.arc(e.clientX - r.left, e.clientY - r.top, rad, 0, Math.PI * 2);
+    x.fillStyle = 'rgba(120,120,140,0.15)';
+    x.strokeStyle = 'rgba(80,80,100,0.6)';
+    x.lineWidth = 1;
+    x.fill();
+    x.stroke();
+  }
+  eraseAt(x, y) {
+    const r = this.m.tools.settings.eraser.size;
+    const shapes = this.shapes;
+    const keep = shapes.filter((s) => !hit(s, x, y, r));
+    if (keep.length !== shapes.length) {
+      this.m.pages[this.key] = keep;
+      this.redraw();
+    }
+  }
+
+  // ----------------------------------------------------------- texto
+  openTextEditor(x, y) {
+    const existing = this.shapes.findLast?.((s) => s.t === 'text' && hit(s, x, y, 2));
+    const st = this.m.tools.settings.text;
+    const shape = existing ? { ...existing } : { t: 'text', c: st.color, s: st.size, x, y, text: '' };
+    if (existing) {
+      // esconde enquanto edita
+      this.m.pages[this.key] = this.shapes.filter((s) => s !== existing);
+      this.redraw();
+    }
+    const k = this.k;
+    const ta = document.createElement('textarea');
+    ta.className = 'ann-text-editor';
+    ta.value = shape.text;
+    ta.placeholder = 'Escreva aqui…';
+    Object.assign(ta.style, {
+      left: `${shape.x * k}px`,
+      top: `${shape.y * k}px`,
+      fontSize: `${shape.s * k}px`,
+      color: shape.c,
+      fontFamily: TEXT_FONT,
+    });
+    this.host.appendChild(ta);
+    const grow = () => {
+      ta.style.height = 'auto';
+      ta.style.width = 'auto';
+      ta.style.height = `${ta.scrollHeight + 2}px`;
+      ta.style.width = `${Math.min(this.w - shape.x * k, Math.max(120, ta.scrollWidth + 8))}px`;
+    };
+    ta.addEventListener('input', grow);
+    ta.focus({ preventScroll: true });
+    requestAnimationFrame(() => {
+      grow();
+      ta.focus({ preventScroll: true });
+    });
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      const text = ta.value.replace(/\s+$/, '');
+      ta.remove();
+      if (existing) this.m.pages[this.key] = [...this.shapes, existing]; // restaura p/ o histórico
+      const without = this.shapes.filter((s) => s !== existing);
+      if (!text) {
+        if (existing) this.m.commit(this.key, without);
+        else this.redraw();
+        return;
+      }
+      shape.text = text;
+      // mede caixa em unidades
+      const mc = document.createElement('canvas').getContext('2d');
+      mc.font = `500 ${shape.s}px ${TEXT_FONT}`;
+      const lines = text.split('\n');
+      shape.bw = Math.max(...lines.map((l) => mc.measureText(l).width));
+      shape.bh = lines.length * shape.s * 1.3;
+      this.m.commit(this.key, [...without, shape]);
+    };
+    ta.addEventListener('blur', finish);
+    ta.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) ta.blur();
+    });
+    ta.addEventListener('pointerdown', (e) => e.stopPropagation());
+  }
+
+  destroy() {
+    this.ro.disconnect();
+    this.hl.remove();
+    this.ink.remove();
+    this.live.remove();
+    this.host.querySelectorAll('.ann-text-editor').forEach((t) => t.blur());
+  }
+}
+
+/**
+ * Converte uma seleção de texto (Range) em retângulos de marca-texto
+ * relativos a um elemento-página. Junta pedaços da mesma linha.
+ */
+export function rangeToRects(range, pageEl) {
+  const pr = pageEl.getBoundingClientRect();
+  const k = UNIT / pr.width;
+  const raw = [...range.getClientRects()]
+    .filter((r) => r.width > 1 && r.height > 1)
+    .map((r) => {
+      const left = Math.max(r.left, pr.left),
+        right = Math.min(r.right, pr.right);
+      const top = Math.max(r.top, pr.top),
+        bottom = Math.min(r.bottom, pr.bottom);
+      return right > left && bottom > top ? [(left - pr.left) * k, (top - pr.top) * k, (right - left) * k, (bottom - top) * k] : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  const lines = [];
+  for (const r of raw) {
+    const last = lines[lines.length - 1];
+    const sameLine = last && Math.abs(last[1] + last[3] / 2 - (r[1] + r[3] / 2)) < Math.min(last[3], r[3]) * 0.5;
+    if (sameLine && r[0] <= last[0] + last[2] + 8) {
+      const x1 = Math.min(last[0], r[0]);
+      const x2 = Math.max(last[0] + last[2], r[0] + r[2]);
+      const y1 = Math.min(last[1], r[1]);
+      const y2 = Math.max(last[1] + last[3], r[1] + r[3]);
+      lines[lines.length - 1] = [x1, y1, x2 - x1, y2 - y1];
+    } else lines.push(r);
+  }
+  return lines.map((r) => r.map((v) => +v.toFixed(2)));
+}
+
+export { hexToRgba };
