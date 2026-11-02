@@ -6,7 +6,7 @@ import { icon } from './icons.js';
 import { KINDS } from './formats.js';
 import { ToolState, History, AnnotationManager, PALETTES } from './annotations.js';
 import { toast, popover, menu, dialog, confirmDialog, closePopover, hideSelectionMenu, loading } from './ui.js';
-import { go, toggleTheme, getTheme } from './nav.js';
+import { go, toggleTheme, getTheme, getLastList } from './nav.js';
 
 const VIEWERS = {
   pdf: () => import('./viewers/pdf.js'),
@@ -308,10 +308,10 @@ export async function openReader(app, id) {
         ${
           t === 'highlighter' && viewer.textHighlight
             ? `<div class="seg" role="radiogroup">
-                 <button data-mode="text" class="${s.mode === 'text' ? 'on' : ''}">${icon('type', 15)} Sobre o texto</button>
-                 <button data-mode="free" class="${s.mode !== 'text' ? 'on' : ''}">${icon('highlighter', 15)} Livre</button>
+                 <button data-mode="auto" class="${s.mode !== 'free' ? 'on' : ''}">${icon('type', 15)} Gruda no texto</button>
+                 <button data-mode="free" class="${s.mode === 'free' ? 'on' : ''}">${icon('highlighter', 15)} Livre</button>
                </div>
-               <p class="tp-hint">${s.mode === 'text' ? 'Selecione o texto e ele será marcado automaticamente.' : 'Desenhe à mão livre. Segure Shift para linha reta.'}</p>`
+               <p class="tp-hint">${s.mode !== 'free' ? 'Arraste o dedo por cima do texto: ele marca na hora, linha por linha. Fora do texto, risca à mão livre.' : 'Desenhe à mão livre. Segure Shift para linha reta.'}</p>`
             : ''
         }
         ${
@@ -390,7 +390,7 @@ export async function openReader(app, id) {
     const b = e.target.closest('[data-act]');
     if (!b) return;
     const act = b.dataset.act;
-    if (act === 'back') go('/');
+    if (act === 'back') go(getLastList());
     if (act === 'theme') {
       toggleTheme();
       b.innerHTML = icon(getTheme() === 'dark' ? 'sun' : 'moon');
@@ -541,6 +541,7 @@ export async function openReader(app, id) {
       if (dirty) await persist.flush();
     },
     destroy() {
+      document.querySelectorAll('.modal-backdrop, .present').forEach((m) => m.remove());
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', onResize);
       window.removeEventListener('beforeunload', onBeforeUnload);

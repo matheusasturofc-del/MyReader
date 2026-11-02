@@ -15,7 +15,7 @@ export const PALETTES = {
 
 const DEFAULTS = {
   pen: { color: '#1b1b1f', size: 3 },
-  highlighter: { color: '#ffe14d', size: 18, mode: 'free' },
+  highlighter: { color: '#ffe14d', size: 18, mode: 'auto' },
   text: { color: '#1b1b1f', size: 18 },
   shape: { color: '#e03131', size: 3, kind: 'rect' },
   eraser: { size: 14 },
@@ -34,6 +34,8 @@ export class ToolState extends EventTarget {
     this.tool = 'read';
     this.settings = structuredClone(DEFAULTS);
     for (const k of Object.keys(this.settings)) Object.assign(this.settings[k], saved[k] || {});
+    // 'auto' = gruda no texto quando passa por cima dele; 'free' = sempre à mão livre.
+    if (this.settings.highlighter.mode !== 'free') this.settings.highlighter.mode = 'auto';
   }
   set(tool) {
     this.tool = tool;
@@ -346,6 +348,39 @@ export class AnnotationManager {
   add(key, shape) {
     this.commit(key, [...this.shapes(key), shape]);
   }
+  /**
+   * Posição do cursor de texto sob um ponto da tela (dentro da página da camada).
+   * strict: exige que o ponto esteja realmente em cima de uma linha de texto.
+   */
+  caretAt(layer, x, y, strict) {
+    const live = layer.live;
+    const prev = live.style.pointerEvents;
+    live.style.pointerEvents = 'none';
+    let node = null,
+      offset = 0;
+    try {
+      if (document.caretPositionFromPoint) {
+        const p = document.caretPositionFromPoint(x, y);
+        node = p?.offsetNode;
+        offset = p?.offset ?? 0;
+      } else if (document.caretRangeFromPoint) {
+        const r = document.caretRangeFromPoint(x, y);
+        node = r?.startContainer;
+        offset = r?.startOffset ?? 0;
+      }
+    } finally {
+      live.style.pointerEvents = prev;
+    }
+    if (!node || node.nodeType !== 3 || !layer.host.contains(node) || !node.textContent.trim()) return null;
+    if (node.parentElement?.closest('.page-num, .ann-text-editor')) return null;
+    if (strict) {
+      const rng = document.createRange();
+      rng.selectNodeContents(node);
+      const ok = [...rng.getClientRects()].some((r) => y >= r.top - 4 && y <= r.bottom + 4 && x >= r.left - 16 && x <= r.right + 16);
+      if (!ok) return null;
+    }
+    return { node, offset: Math.min(offset, node.length) };
+  }
   hasAny() {
     return Object.values(this.pages).some((s) => s.length);
   }
@@ -429,7 +464,7 @@ export class AnnotationLayer {
   }
   updateMode() {
     const t = this.m.tools;
-    const active = DRAW_TOOLS.has(t.tool) && !(t.tool === 'highlighter' && t.settings.highlighter.mode === 'text');
+    const active = DRAW_TOOLS.has(t.tool);
     this.live.classList.toggle('active', active);
     this.live.dataset.tool = active ? t.tool : '';
   }
@@ -466,14 +501,20 @@ export class AnnotationLayer {
     if (tool === 'pen') {
       this.current = { t: 'pen', c: s.pen.color, w: s.pen.size, pts: [x, y, pr], pr: e.pointerType === 'pen' ? 1 : 0 };
     } else if (tool === 'highlighter') {
-      this.current = { t: 'hl', c: s.highlighter.color, w: s.highlighter.size, pts: [x, y, 0.5] };
-      this.hlStart = [x, y];
+      // Marca-texto inteligente: se começou em cima de texto, marca o texto por onde o dedo passa.
+      const caret = s.highlighter.mode !== 'free' ? this.m.caretAt(this, e.clientX, e.clientY, true) : null;
+      if (caret) this.textHl = { start: caret, end: caret, color: s.highlighter.color };
+      else {
+        this.current = { t: 'hl', c: s.highlighter.color, w: s.highlighter.size, pts: [x, y, 0.5] };
+        this.hlStart = [x, y];
+      }
     } else if (tool === 'shape') {
       this.current = { t: 'shape', kind: s.shape.kind, c: s.shape.color, w: s.shape.size, x1: x, y1: y, x2: x, y2: y };
     } else if (tool === 'eraser') {
       this.eraseBefore = this.shapes.slice();
       this.erasing = true;
       this.eraseAt(x, y);
+      this.m.onEraseText?.(this, e.clientX, e.clientY);
     } else if (tool === 'text') {
       this.textDown = [x, y];
     }
@@ -486,8 +527,15 @@ export class AnnotationLayer {
     }
     const [x, y] = this.pos(e);
     const c = this.current;
+    if (this.textHl) {
+      const caret = this.m.caretAt(this, e.clientX, e.clientY, false);
+      if (caret) this.textHl.end = caret;
+      this.drawTextHl();
+      return;
+    }
     if (this.erasing) {
       this.eraseAt(x, y);
+      this.m.onEraseText?.(this, e.clientX, e.clientY);
       this.drawEraserCursor(e);
       return;
     }
@@ -534,6 +582,17 @@ export class AnnotationLayer {
       this.openTextEditor(x, y);
       return;
     }
+    if (this.textHl) {
+      const th = this.textHl;
+      this.textHl = null;
+      this.clearLive();
+      const range = makeRange(th.start, th.end);
+      if (!range || range.collapsed) return;
+      if (this.m.onTextHighlight?.(this, range, th.color)) return; // o visualizador cuidou (ex.: Word)
+      const rects = rangeToRects(range, this.host);
+      if (rects.length) this.m.add(this.key, { t: 'hlrect', c: th.color, rects });
+      return;
+    }
     const c = this.current;
     this.current = null;
     this.clearLive();
@@ -544,6 +603,7 @@ export class AnnotationLayer {
   }
   cancel() {
     this.current = null;
+    this.textHl = null;
     this.erasing = false;
     this.textDown = null;
     this.pointerId = null;
@@ -563,6 +623,16 @@ export class AnnotationLayer {
       x.globalAlpha = 0.55;
       drawHighlighter(x, c, this.k);
     } else drawShapes(x, [c], this.k, 'ink');
+  }
+  drawTextHl() {
+    if (!this.w || !this.textHl) return;
+    const x = this.ctx(this.live);
+    x.clearRect(0, 0, this.w, this.h);
+    const range = makeRange(this.textHl.start, this.textHl.end);
+    if (!range) return;
+    const rects = rangeToRects(range, this.host);
+    x.globalAlpha = 0.5;
+    drawHlRects(x, { c: this.textHl.color, rects }, this.k);
   }
   drawEraserCursor(e) {
     if (!this.w) return;
@@ -659,6 +729,44 @@ export class AnnotationLayer {
     this.ink.remove();
     this.live.remove();
     this.host.querySelectorAll('.ann-text-editor').forEach((t) => t.blur());
+  }
+}
+
+/** Estende o Range para começar e terminar em palavras inteiras (o dedo é impreciso). */
+export function snapWords(r) {
+  const isW = (ch) => !!ch && !/[\s.,;:!?()\[\]{}"“”'«»—–-]/.test(ch);
+  const sc = r.startContainer,
+    ec = r.endContainer;
+  if (sc.nodeType === 3) {
+    let o = r.startOffset;
+    const t = sc.textContent;
+    while (o < t.length && /\s/.test(t[o])) o++; // não começa em espaço
+    while (o > 0 && isW(t[o - 1]) && isW(t[o])) o--;
+    r.setStart(sc, Math.min(o, t.length));
+  }
+  if (ec.nodeType === 3) {
+    let o = r.endOffset;
+    const t = ec.textContent;
+    while (o > 0 && /\s/.test(t[o - 1])) o--; // não termina em espaço
+    while (o < t.length && isW(t[o]) && isW(t[o - 1])) o++;
+    if (ec !== r.startContainer || o >= r.startOffset) r.setEnd(ec, o);
+  }
+  return r;
+}
+
+/** Cria um Range entre duas posições de cursor, na ordem certa. */
+export function makeRange(a, b) {
+  try {
+    const r = document.createRange();
+    let forward = true;
+    if (a.node === b.node) forward = b.offset >= a.offset;
+    else forward = !!(a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const [s, e] = forward ? [a, b] : [b, a];
+    r.setStart(s.node, s.offset);
+    r.setEnd(e.node, e.offset);
+    return snapWords(r);
+  } catch {
+    return null;
   }
 }
 

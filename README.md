@@ -26,7 +26,7 @@ pontilhadas ou pauta musical para escrever à mão) e **Partitura** (ABC).
 ## 🖊️ Ferramentas
 
 - **Caneta** com sensibilidade à pressão (stylus) e rejeição da palma
-- **Marca-texto** com efeito real (o texto continua nítido por baixo) — à mão livre ou só selecionando o texto
+- **Marca-texto** com efeito real (o texto continua nítido por baixo): é só **arrastar o dedo por cima do texto** que ele marca na hora, encaixando em palavras inteiras (PDF, Word, EPUB). Fora do texto, risca à mão livre
 - **Borracha**, **Texto**, **Formas** (retângulo, elipse, linha, seta), cores e espessuras
 - **Desfazer/refazer**, zoom (botões, Ctrl+roda, pinça com 2 dedos), papel **branco / sépia / noturno**, tema claro/escuro
 - Tudo é salvo automaticamente

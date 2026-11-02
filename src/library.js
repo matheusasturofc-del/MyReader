@@ -4,7 +4,7 @@ import { h, esc, uid, formatDate, formatSize, download, ext } from './util.js';
 import { icon } from './icons.js';
 import { KINDS, ACCEPT, detectKind, UNSUPPORTED } from './formats.js';
 import { toast, menu, dialog, confirmDialog } from './ui.js';
-import { go, toggleTheme, getTheme } from './nav.js';
+import { go, toggleTheme, getTheme, setLastList } from './nav.js';
 
 const ABC_TEMPLATE = `X:1
 T:Minha melodia
@@ -70,24 +70,39 @@ function pickFiles(multiple = true) {
 let filter = 'all';
 let query = '';
 
-export async function renderLibrary(app) {
+let sort = 'recent';
+
+/** page: 'home' (Início) ou 'library' (página só da Biblioteca). */
+export async function renderLibrary(app, page = 'home') {
+  setLastList(page === 'library' ? '/biblioteca' : '/');
   document.title = 'MyReader';
   app.innerHTML = '';
   const theme = getTheme();
-  const root = h(`
-    <div class="lib">
+  const isLib = page === 'library';
+  const nav = `
+    <nav class="lib-nav" aria-label="Seções">
+      <a href="#/" class="${isLib ? '' : 'on'}">${icon('sparkles', 17)}<span>Início</span></a>
+      <a href="#/biblioteca" class="${isLib ? 'on' : ''}">${icon('library', 17)}<span>Biblioteca</span></a>
+    </nav>`;
+  const header = `
       <header class="lib-top">
-        <div class="brand">
+        <a class="brand" href="#/">
           <img src="./icon.svg" alt="" width="34" height="34">
           <span>My<b>Reader</b></span>
+        </a>
+        ${nav}
+        <div class="lib-top-actions">
+          ${isLib ? '' : `<a class="icon-btn" href="#/biblioteca" title="Buscar na biblioteca" aria-label="Buscar na biblioteca">${icon('search')}</a>`}
+          <button class="icon-btn" data-act="theme" title="Alternar tema" aria-label="Alternar tema">${icon(theme === 'dark' ? 'sun' : 'moon')}</button>
         </div>
-        <div class="lib-search">
-          ${icon('search', 18)}
-          <input type="search" placeholder="Buscar na biblioteca" aria-label="Buscar na biblioteca" value="${esc(query)}">
-        </div>
-        <button class="icon-btn" data-act="theme" title="Alternar tema" aria-label="Alternar tema">${icon(theme === 'dark' ? 'sun' : 'moon')}</button>
-      </header>
-
+      </header>`;
+  const tabbar = `
+      <nav class="tabbar" aria-label="Navegação">
+        <a href="#/" class="${isLib ? '' : 'on'}">${icon('sparkles', 22)}<span>Início</span></a>
+        <button data-act="open" class="tab-open" aria-label="Abrir arquivo">${icon('plus', 26)}</button>
+        <a href="#/biblioteca" class="${isLib ? 'on' : ''}">${icon('library', 22)}<span>Biblioteca</span></a>
+      </nav>`;
+  const homeBody = `
       <section class="hero">
         <div class="hero-text">
           <span class="eyebrow">${icon('sparkles', 15)} Leitor universal</span>
@@ -95,7 +110,7 @@ export async function renderLibrary(app) {
           <p>PDF, Word, PowerPoint, partituras, EPUB, planilhas, imagens e textos — com caneta, marca-texto, notas e edição. Tudo fica salvo no seu aparelho, até offline.</p>
           <div class="hero-actions">
             <button class="btn btn-primary btn-lg" data-act="open">${icon('folder', 19)} Abrir arquivo</button>
-            <button class="btn btn-ghost btn-lg" data-act="new-doc">${icon('file-plus', 19)} Novo documento</button>
+            <a class="btn btn-ghost btn-lg" href="#/biblioteca">${icon('library', 19)} Minha biblioteca</a>
           </div>
         </div>
         <button class="dropzone" data-act="open" aria-label="Soltar ou escolher arquivos">
@@ -129,12 +144,44 @@ export async function renderLibrary(app) {
 
       <section class="recent">
         <div class="section-head">
-          <h2>Biblioteca</h2>
-          <div class="chips" role="tablist"></div>
+          <h2>Recentes</h2>
+          <a class="see-all" href="#/biblioteca">Ver biblioteca completa ${icon('chevron-right', 17)}</a>
         </div>
         <div class="grid"></div>
-      </section>
+      </section>`;
+  const libBody = `
+      <section class="lib-page">
+        <div class="lib-page-head">
+          <div>
+            <h1>Biblioteca</h1>
+            <p class="lib-count"></p>
+          </div>
+          <button class="btn btn-primary" data-act="open">${icon('plus', 18)} Abrir arquivo</button>
+        </div>
+        <div class="lib-tools">
+          <div class="lib-search">
+            ${icon('search', 18)}
+            <input type="search" placeholder="Buscar por nome" aria-label="Buscar na biblioteca" value="${esc(query)}">
+          </div>
+          <label class="lib-sort">${icon('list', 16)}
+            <select aria-label="Ordenar">
+              <option value="recent" ${sort === 'recent' ? 'selected' : ''}>Abertos recentemente</option>
+              <option value="added" ${sort === 'added' ? 'selected' : ''}>Adicionados recentemente</option>
+              <option value="name" ${sort === 'name' ? 'selected' : ''}>Nome (A–Z)</option>
+              <option value="kind" ${sort === 'kind' ? 'selected' : ''}>Tipo</option>
+              <option value="size" ${sort === 'size' ? 'selected' : ''}>Tamanho</option>
+            </select>
+          </label>
+        </div>
+        <div class="chips" role="tablist"></div>
+        <div class="grid"></div>
+      </section>`;
+  const root = h(`
+    <div class="lib ${isLib ? 'is-library' : 'is-home'}">
+      ${header}
+      ${isLib ? libBody : homeBody}
       <footer class="lib-foot">Seus arquivos nunca saem do aparelho · MyReader</footer>
+      ${tabbar}
     </div>`);
   app.appendChild(root);
 
@@ -143,7 +190,7 @@ export async function renderLibrary(app) {
     if (act === 'open') pickFiles();
     if (act === 'theme') {
       toggleTheme();
-      renderLibrary(app);
+      renderLibrary(app, page);
     }
     if (act === 'new-doc') createNew('docx');
     if (act === 'new-abc') createNew('abc');
@@ -152,8 +199,14 @@ export async function renderLibrary(app) {
 
   const files = (await db.listFiles()).sort((a, b) => (b.openedAt || 0) - (a.openedAt || 0));
   const grid = root.querySelector('.grid');
-  const chips = root.querySelector('.chips');
-  const search = root.querySelector('.lib-search input');
+  const chips = root.querySelector('.chips') || document.createElement('div');
+  const search = root.querySelector('.lib-search input') || document.createElement('input');
+  const countEl = root.querySelector('.lib-count');
+  root.querySelector('.lib-sort select')?.addEventListener('change', (e) => {
+    sort = e.target.value;
+    renderGrid();
+  });
+  if (isLib && query) requestAnimationFrame(() => search.focus());
 
   const kindsPresent = [...new Set(files.map((f) => f.kind))];
   const chipKinds = ['all', ...kindsPresent];
@@ -177,13 +230,30 @@ export async function renderLibrary(app) {
 
   function renderGrid() {
     const q = query.trim().toLowerCase();
-    const list = files.filter((f) => (filter === 'all' || f.kind === filter) && (!q || f.name.toLowerCase().includes(q)));
+    let list = isLib ? files.filter((f) => (filter === 'all' || f.kind === filter) && (!q || f.name.toLowerCase().includes(q))) : files.slice(0, 8);
+    if (isLib) {
+      const by = {
+        recent: (a, b) => (b.openedAt || 0) - (a.openedAt || 0),
+        added: (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
+        name: (a, b) => a.name.localeCompare(b.name, 'pt-BR', { numeric: true }),
+        kind: (a, b) => (KINDS[a.kind]?.label || '').localeCompare(KINDS[b.kind]?.label || '') || a.name.localeCompare(b.name, 'pt-BR'),
+        size: (a, b) => (b.size || 0) - (a.size || 0),
+      }[sort];
+      list = list.slice().sort(by);
+    }
+    if (countEl) {
+      const total = formatSize(files.reduce((a, f) => a + (f.size || 0), 0));
+      countEl.textContent = files.length
+        ? `${files.length} arquivo${files.length > 1 ? 's' : ''}${total ? ` · ${total}` : ''}${list.length !== files.length ? ` · mostrando ${list.length}` : ''}`
+        : '';
+    }
     if (!files.length) {
       grid.innerHTML = `
         <div class="empty">
           <div class="empty-art">${icon('library', 34)}</div>
           <strong>Sua biblioteca está vazia</strong>
-          <p>Abra um PDF, documento do Word, partitura ou qualquer arquivo para começar.</p>
+          <p>Abra um PDF, documento do Word, PowerPoint, partitura ou qualquer arquivo para começar.</p>
+          <button class="btn btn-primary" data-act="open" style="margin-top:16px">${icon('folder', 18)} Abrir arquivo</button>
         </div>`;
       return;
     }
@@ -238,7 +308,7 @@ export async function renderLibrary(app) {
             });
             if (name && name.trim()) {
               await db.updateFile(f.id, { name: name.trim() });
-              renderLibrary(app);
+              renderLibrary(app, page);
             }
           },
         },
@@ -258,7 +328,7 @@ export async function renderLibrary(app) {
           run: async () => {
             if (await confirmDialog('Remover arquivo?', `<p><b>${esc(f.name)}</b> e todas as suas anotações serão apagados deste aparelho.</p>`, 'Remover', true)) {
               await db.deleteFile(f.id);
-              renderLibrary(app);
+              renderLibrary(app, page);
             }
           },
         },

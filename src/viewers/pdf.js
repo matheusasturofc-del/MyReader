@@ -327,11 +327,6 @@ export default class PdfViewer {
       }
       sel.removeAllRanges();
     };
-    const t = this.ctx.tools;
-    if (t.tool === 'highlighter' && t.settings.highlighter.mode === 'text') {
-      apply(t.settings.highlighter.color);
-      return;
-    }
     const rects = range.getClientRects();
     const last = rects[rects.length - 1] || range.getBoundingClientRect();
     const first = rects[0] || last;

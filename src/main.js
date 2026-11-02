@@ -26,7 +26,7 @@ function route() {
       }
     } else {
       try {
-        await renderLibrary(app);
+        await renderLibrary(app, /^#\/biblioteca/.test(location.hash) ? 'library' : 'home');
       } catch (err) {
         console.error(err);
         app.innerHTML = `<div class="error-box"><strong>Não foi possível abrir a biblioteca</strong><p>${String(err?.message || err)}</p><p>Se estiver numa aba anônima, o navegador pode bloquear o armazenamento local.</p></div>`;

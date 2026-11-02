@@ -18,3 +18,8 @@ export function go(path) {
   if (location.hash !== `#${path}`) location.hash = path;
   else window.dispatchEvent(new HashChangeEvent('hashchange'));
 }
+
+// Última lista visitada (Início ou Biblioteca), para o botão Voltar do leitor.
+let lastList = '/';
+export const setLastList = (p) => (lastList = p);
+export const getLastList = () => lastList;

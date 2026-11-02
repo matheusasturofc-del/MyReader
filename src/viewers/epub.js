@@ -3,8 +3,8 @@
 import ePub from 'epubjs';
 import { h, esc, download, baseName } from '../util.js';
 import { icon } from '../icons.js';
-import { PALETTES } from '../annotations.js';
-import { showSelectionMenu, hideSelectionMenu, toast, confirmDialog } from '../ui.js';
+import { PALETTES, snapWords } from '../annotations.js';
+import { showSelectionMenu, hideSelectionMenu, toast, confirmDialog, popover } from '../ui.js';
 
 const THEMES = {
   white: { body: { color: '#1b1b1f', background: '#ffffff' } },
@@ -78,12 +78,13 @@ export default class EpubViewer {
     r.on('selected', (cfiRange, contents) => this.onSelected(cfiRange, contents));
     r.on('keyup', (e) => this.onKey(e));
     r.hooks.content.register((contents) => {
+      this.bindDragHighlight(contents);
       // gesto de deslizar para virar página
       const d = contents.document;
       let sx = null;
       d.addEventListener('touchstart', (e) => (sx = e.touches.length === 1 ? e.touches[0].clientX : null), { passive: true });
       d.addEventListener('touchend', (e) => {
-        if (sx == null || this.flow === 'scrolled') return;
+        if (sx == null || this.flow === 'scrolled' || this.hlMode) return;
         const dx = e.changedTouches[0].clientX - sx;
         if (Math.abs(dx) > 60 && d.getSelection()?.isCollapsed) dx < 0 ? r.next() : r.prev();
       });
@@ -110,13 +111,112 @@ export default class EpubViewer {
   }
 
   async removeHl(hl) {
+    // ignora o "clique" que acontece ao terminar de arrastar o marca-texto por cima de um destaque
+    if (this.hlMode || Date.now() - (this.lastDrag || 0) < 800) return;
     if (!(await confirmDialog('Remover destaque?', `<blockquote>${esc(hl.text.slice(0, 200))}</blockquote>`, 'Remover', true))) return;
     this.rendition.annotations.remove(hl.cfi, 'highlight');
     this.ctx.state.epubHl = this.ctx.state.epubHl.filter((x) => x !== hl);
     this.ctx.saveState();
   }
 
+  // ---------------------------------------------------------------- marca-texto arrastando
+  caret(d, x, y) {
+    let node = null,
+      offset = 0;
+    if (d.caretPositionFromPoint) {
+      const p = d.caretPositionFromPoint(x, y);
+      node = p?.offsetNode;
+      offset = p?.offset ?? 0;
+    } else if (d.caretRangeFromPoint) {
+      const r = d.caretRangeFromPoint(x, y);
+      node = r?.startContainer;
+      offset = r?.startOffset ?? 0;
+    }
+    if (!node || node.nodeType !== 3 || !node.textContent.trim()) return null;
+    return { node, offset: Math.min(offset, node.length) };
+  }
+
+  range(d, a, b) {
+    const r = d.createRange();
+    const fwd = a.node === b.node ? b.offset >= a.offset : !!(a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const [s, e] = fwd ? [a, b] : [b, a];
+    r.setStart(s.node, s.offset);
+    r.setEnd(e.node, e.offset);
+    return snapWords(r);
+  }
+
+  bindDragHighlight(contents) {
+    const d = contents.document;
+    const style = d.createElement('style');
+    d.head?.appendChild(style);
+    contents.__mrStyle = style;
+    this.applyHlMode(contents);
+    let drag = null;
+    d.addEventListener('pointerdown', (e) => {
+      if (!this.hlMode || e.button > 0) return;
+      const c = this.caret(d, e.clientX, e.clientY);
+      if (!c) return;
+      e.preventDefault();
+      drag = { start: c, end: c, id: e.pointerId };
+      try {
+        d.documentElement.setPointerCapture(e.pointerId);
+      } catch {}
+    });
+    d.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      e.preventDefault();
+      const c = this.caret(d, e.clientX, e.clientY);
+      if (c) drag.end = c;
+      const sel = d.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(this.range(d, drag.start, drag.end));
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dr = drag;
+      drag = null;
+      this.lastDrag = Date.now();
+      const range = this.range(d, dr.start, dr.end);
+      d.getSelection()?.removeAllRanges();
+      const text = range.toString().trim();
+      if (!text || e.type === 'pointercancel') return;
+      let cfi;
+      try {
+        cfi = contents.cfiFromRange(range);
+      } catch (err) {
+        console.warn(err);
+        return;
+      }
+      this.addHl(cfi, this.ctx.tools.settings.highlighter.color, text);
+    };
+    d.addEventListener('pointerup', end);
+    d.addEventListener('pointercancel', end);
+  }
+
+  applyHlMode(contents) {
+    const st = contents.__mrStyle;
+    if (!st) return;
+    const c = this.ctx.tools.settings.highlighter.color;
+    st.textContent = this.hlMode ? `html,body{touch-action:none!important;-webkit-user-select:text!important;user-select:text!important;cursor:text}::selection{background:${c}!important;color:inherit}` : '';
+  }
+
+  setHlMode(on) {
+    this.hlMode = on;
+    this.rendition?.getContents?.().forEach((c) => this.applyHlMode(c));
+    const b = this.slotEl?.querySelector('[data-a="hlmode"]');
+    b?.classList.toggle('on', on);
+    if (on) toast('Marca-texto ligado: arraste o dedo sobre o texto para marcar.');
+  }
+
+  addHl(cfi, color, text) {
+    const hl = { cfi, color, text, at: Date.now(), chapter: this.chapterLabel() };
+    this.ctx.state.epubHl.push(hl);
+    this.ctx.saveState();
+    this.drawHl(hl);
+  }
+
   onSelected(cfiRange, contents) {
+    if (this.hlMode) return;
     const range = contents.range(cfiRange);
     const text = range.toString().trim();
     if (!text) return;
@@ -126,10 +226,7 @@ export default class EpubViewer {
     showSelectionMenu(rect, {
       colors: PALETTES.highlighter.slice(0, 5),
       onHighlight: (color) => {
-        const hl = { cfi: cfiRange, color, text, at: Date.now(), chapter: this.chapterLabel() };
-        this.ctx.state.epubHl.push(hl);
-        this.ctx.saveState();
-        this.drawHl(hl);
+        this.addHl(cfiRange, color, text);
         contents.window.getSelection()?.removeAllRanges();
       },
       onCopy: () => navigator.clipboard?.writeText(text).then(() => toast('Texto copiado')),
@@ -167,11 +264,17 @@ export default class EpubViewer {
     const s = h(`
       <div class="pdf-nav">
         <button class="icon-btn sm" data-a="toc" title="Sumário" aria-label="Sumário">${icon('sidebar', 18)}</button>
-        <button class="icon-btn sm" data-a="hls" title="Meus destaques" aria-label="Meus destaques">${icon('highlighter', 18)}</button>
+        <button class="icon-btn sm" data-a="hls" title="Meus destaques" aria-label="Meus destaques">${icon('bookmark', 18)}</button>
+        <button class="btn btn-soft btn-sm hl-toggle" data-a="hlmode" title="Marca-texto: arraste sobre o texto">${icon('highlighter', 17)}<span class="hide-sm">Marca-texto</span><i class="hl-dot" style="background:${this.ctx.tools.settings.highlighter.color}"></i></button>
       </div>`);
     this.ctx.slot.appendChild(s);
+    this.slotEl = s;
     s.addEventListener('click', (e) => {
       const a = e.target.closest('[data-a]')?.dataset.a;
+      if (a === 'hlmode') {
+        if (this.hlMode) this.pickColor(e.target.closest('button'));
+        else this.setHlMode(true);
+      }
       if (a === 'toc') this.toggleSide('toc');
       if (a === 'hls') this.toggleSide('hls');
     });
@@ -215,6 +318,24 @@ export default class EpubViewer {
     }
     side.hidden = false;
     this.ctx.root.classList.add('side-open');
+  }
+
+  pickColor(anchor) {
+    const panel = h(`<div class="tool-panel"><div class="tp-title">${icon('highlighter', 16)} Marca-texto</div><div class="swatches">${PALETTES.highlighter
+      .map((c) => `<button class="swatch ${c === this.ctx.tools.settings.highlighter.color ? 'on' : ''}" data-c="${c}" style="--c:${c}"></button>`)
+      .join('')}</div><button class="btn btn-sm" data-off>${icon('x', 16)} Desligar marca-texto</button></div>`);
+    const pop = popover(anchor, panel);
+    panel.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.c) {
+        this.ctx.tools.update('highlighter', { color: b.dataset.c });
+        anchor.querySelector('.hl-dot').style.background = b.dataset.c;
+        this.rendition.getContents().forEach((c) => this.applyHlMode(c));
+      }
+      if (b.hasAttribute('data-off')) this.setHlMode(false);
+      pop.close();
+    });
   }
 
   setZoom(z) {

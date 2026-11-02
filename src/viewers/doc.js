@@ -32,11 +32,6 @@ export default class DocViewer {
 
   async mount() {
     const { ctx } = this;
-    // Pede a ferramenta "sobre o texto" por padrão no editor.
-    if (ctx.tools.settings.highlighter.mode !== 'text' && !ctx.state.hlModeSet) {
-      ctx.tools.update('highlighter', { mode: 'text' });
-      ctx.state.hlModeSet = true;
-    }
     let html = ctx.state.html;
     if (html == null) html = await this.convert();
     this.host = h(`<div class="page-host doc-host"><article class="paper ${this.plain ? 'paper-plain' : ''}" spellcheck="true"></article></div>`);
@@ -53,6 +48,15 @@ export default class DocViewer {
     ctx.content.appendChild(this.host);
     this.applyZoom();
     ctx.ann.attach(this.host, 'doc');
+    if (!this.plain) {
+      // Marca-texto arrastando o dedo: vira destaque de verdade no texto (vai junto no .docx).
+      ctx.ann.onTextHighlight = (layer, range, color) => {
+        if (!this.paper.contains(range.commonAncestorContainer)) return false;
+        this.markRange(range, color);
+        return true;
+      };
+      ctx.ann.onEraseText = (layer, x, y) => this.unmarkAt(layer, x, y);
+    }
 
     if (!this.plain) this.buildToolbar();
     this.bind();
@@ -120,12 +124,6 @@ export default class DocViewer {
     if (!sel?.rangeCount || sel.isCollapsed) return;
     const range = sel.getRangeAt(0);
     if (!this.paper.contains(range.commonAncestorContainer)) return;
-    const t = this.ctx.tools;
-    if (t.tool === 'highlighter' && t.settings.highlighter.mode === 'text') {
-      this.highlight(t.settings.highlighter.color);
-      sel.collapseToEnd();
-      return;
-    }
     if (this.plain) return;
     const r = range.getBoundingClientRect();
     showSelectionMenu(r, {
@@ -137,6 +135,67 @@ export default class DocViewer {
         { icon: 'clear-format', label: 'Remover destaque', run: () => this.highlight('transparent') },
       ],
     });
+  }
+
+  /** Registra uma mudança no texto para o Desfazer/Refazer da barra de ferramentas. */
+  recordEdit(before) {
+    const after = this.paper.innerHTML;
+    if (after === before) return;
+    const set = (html) => {
+      this.paper.innerHTML = html;
+      this.save();
+    };
+    this.ctx.history.push({ undo: () => set(before), redo: () => set(after) });
+    this.save();
+  }
+
+  markRange(range, color) {
+    const before = this.paper.innerHTML;
+    const root = range.commonAncestorContainer.nodeType === 3 ? range.commonAncestorContainer.parentNode : range.commonAncestorContainer;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const parts = [];
+    for (let n = walker.currentNode.nodeType === 3 ? walker.currentNode : walker.nextNode(); n; n = walker.nextNode()) {
+      if (!range.intersectsNode(n) || !n.textContent.trim()) continue;
+      const s = n === range.startContainer ? range.startOffset : 0;
+      const e = n === range.endContainer ? range.endOffset : n.length;
+      if (e > s) parts.push([n, s, e]);
+    }
+    for (const [n, s, e] of parts) {
+      let target = n;
+      if (e < target.length) target.splitText(e);
+      if (s > 0) target = target.splitText(s);
+      const mark = document.createElement('mark');
+      mark.style.backgroundColor = color;
+      target.parentNode.insertBefore(mark, target);
+      mark.appendChild(target);
+    }
+    // junta marcas vizinhas da mesma cor
+    this.paper.querySelectorAll('mark + mark').forEach((m) => {
+      const prev = m.previousSibling;
+      if (prev?.nodeName === 'MARK' && prev.style.backgroundColor === m.style.backgroundColor) {
+        while (m.firstChild) prev.appendChild(m.firstChild);
+        m.remove();
+      }
+    });
+    this.paper.normalize();
+    this.recordEdit(before);
+  }
+
+  unmarkAt(layer, x, y) {
+    const live = layer.live;
+    const prev = live.style.pointerEvents;
+    live.style.pointerEvents = 'none';
+    const el = document.elementFromPoint(x, y);
+    live.style.pointerEvents = prev;
+    if (!el || !this.paper.contains(el)) return;
+    const m = el.closest('mark, [style*="background"]');
+    if (!m || !this.paper.contains(m) || m === this.paper) return;
+    const before = this.paper.innerHTML;
+    if (m.nodeName === 'MARK' || (m.nodeName === 'SPAN' && m.style.length <= 1)) {
+      m.replaceWith(...m.childNodes);
+    } else m.style.backgroundColor = '';
+    this.paper.normalize();
+    this.recordEdit(before);
   }
 
   highlight(color) {
