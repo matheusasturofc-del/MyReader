@@ -77,6 +77,7 @@ export default class EpubViewer {
     });
     r.on('selected', (cfiRange, contents) => this.onSelected(cfiRange, contents));
     r.on('keyup', (e) => this.onKey(e));
+    r.on('click', () => this.ctx.onTap?.());
     r.hooks.content.register((contents) => {
       this.bindDragHighlight(contents);
       // gesto de deslizar para virar página

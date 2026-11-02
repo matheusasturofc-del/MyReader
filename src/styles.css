@@ -2569,3 +2569,130 @@ body > .loading {
     display: none;
   }
 }
+
+/* ================================================================ modo leitura */
+.reading-ui {
+  display: none;
+}
+.reader.reading .r-top,
+.reader.reading .r-sub,
+.reader.reading .dock,
+.reader.reading .r-side {
+  display: none !important;
+}
+.reader.reading .stage-content:not(.fill-content) {
+  padding-top: 14px;
+  padding-bottom: 48px;
+}
+.reader.reading .r-stage {
+  transition: background 0.3s;
+}
+.reader.reading .r-stage.paper-sepia {
+  background: #e8dcc4;
+}
+.reader.reading .r-stage.paper-night {
+  background: #0a0a0c;
+}
+.reader.reading .page-host {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.reader.reading .page-num {
+  opacity: 0.5;
+}
+.reader.reading .abc-wrap.reading .abc-editor,
+.reader.reading .slide-notes {
+  display: none;
+}
+.reader.reading .reading-ui {
+  display: block;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+}
+.rui-bar {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translate(-50%, -16px);
+  width: min(720px, calc(100% - 20px));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 18px;
+  background: var(--glass);
+  backdrop-filter: blur(18px) saturate(1.6);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  transition: opacity 0.25s, transform 0.25s;
+}
+.reading-ui.show .rui-bar {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+.rui-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-weight: 650;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rui-group {
+  display: flex;
+  gap: 2px;
+}
+.rui-btn {
+  height: 40px;
+  min-width: 40px;
+  padding: 0 10px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.rui-btn:hover {
+  background: var(--line);
+}
+.rui-btn[data-r='exit'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.rui-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: transparent;
+}
+.rui-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--grad);
+  opacity: 0.8;
+  transition: width 0.15s;
+}
+.reader[data-kind='epub'].reading .rui-progress {
+  display: none;
+}
+@media (max-width: 720px) {
+  .rui-btn[data-r='exit'] span,
+  .rui-title {
+    display: none;
+  }
+  .rui-bar {
+    justify-content: space-between;
+  }
+}

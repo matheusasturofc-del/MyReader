@@ -72,7 +72,8 @@ export async function openReader(app, id) {
           <button class="zoom-val" data-act="zoom-fit" title="Ajustar à largura">100%</button>
           <button class="icon-btn sm" data-act="zoom-in" title="Aumentar zoom (+)" aria-label="Aumentar zoom">${icon('zoom-in', 18)}</button>
         </div>
-        <button class="icon-btn" data-act="theme" title="Tema claro/escuro" aria-label="Alternar tema">${icon(getTheme() === 'dark' ? 'sun' : 'moon')}</button>
+        <button class="icon-btn" data-act="reading" title="Modo leitura (L)" aria-label="Modo leitura">${icon('book')}</button>
+        <button class="icon-btn hide-sm" data-act="theme" title="Tema claro/escuro" aria-label="Alternar tema">${icon(getTheme() === 'dark' ? 'sun' : 'moon')}</button>
         <button class="btn btn-primary btn-sm" data-act="export">${icon('download', 17)}<span class="hide-sm">Salvar</span></button>
         <button class="icon-btn" data-act="more" title="Mais opções" aria-label="Mais opções">${icon('more')}</button>
       </header>
@@ -391,6 +392,7 @@ export async function openReader(app, id) {
     if (!b) return;
     const act = b.dataset.act;
     if (act === 'back') go(getLastList());
+    if (act === 'reading') enterReading();
     if (act === 'theme') {
       toggleTheme();
       b.innerHTML = icon(getTheme() === 'dark' ? 'sun' : 'moon');
@@ -429,12 +431,7 @@ export async function openReader(app, id) {
         ].map(([p, label]) => ({
           label: label + (state.paper === p ? '  ✓' : ''),
           icon: p === 'night' ? 'moon' : p === 'sepia' ? 'contrast' : 'sun',
-          run: () => {
-            stage.classList.remove(`paper-${state.paper}`);
-            state.paper = p;
-            stage.classList.add(`paper-${p}`);
-            saveState();
-          },
+          run: () => setPaper(p),
         })),
         ...(viewer?.moreItems?.() || []),
         '-',
@@ -503,6 +500,14 @@ export async function openReader(app, id) {
       return;
     }
     if (mod || e.altKey) return;
+    if (e.key.toLowerCase() === 'l') {
+      reading ? exitReading() : enterReading();
+      return;
+    }
+    if (reading && e.key === 'Escape') {
+      exitReading();
+      return;
+    }
     if (viewer?.annotatable) {
       const t = TOOLS.find((x) => x.key === e.key.toLowerCase());
       if (t) {
@@ -522,6 +527,94 @@ export async function openReader(app, id) {
     viewer?.onKey?.(e);
   };
   document.addEventListener('keydown', onKey);
+
+  // ---------------------------------------------------------- cor do papel
+  function setPaper(p) {
+    stage.classList.remove(`paper-${state.paper}`);
+    state.paper = p;
+    stage.classList.add(`paper-${p}`);
+    saveState();
+  }
+
+  // ---------------------------------------------------------- modo leitura
+  let reading = false;
+  let ruiTimer;
+  const rui = h(`
+    <div class="reading-ui">
+      <div class="rui-bar">
+        <button class="rui-btn" data-r="exit">${icon('minimize', 18)}<span>Sair da leitura</span></button>
+        <div class="rui-title">${esc(rec.name.replace(/\.notebook$/, ''))}</div>
+        <div class="rui-group">
+          <button class="rui-btn" data-r="paper" title="Cor do papel" aria-label="Cor do papel">${icon('contrast', 18)}</button>
+          ${viewer?.setZoom ? `<button class="rui-btn" data-r="out" aria-label="Diminuir">${icon('zoom-out', 18)}</button><button class="rui-btn" data-r="in" aria-label="Aumentar">${icon('zoom-in', 18)}</button>` : ''}
+        </div>
+      </div>
+      <div class="rui-progress"><i></i></div>
+    </div>`);
+  root.appendChild(rui);
+  const showRui = (on = true) => {
+    clearTimeout(ruiTimer);
+    rui.classList.toggle('show', on);
+    if (on) ruiTimer = setTimeout(() => rui.classList.remove('show'), 3000);
+  };
+  const updateProgress = () => {
+    const max = stage.scrollHeight - stage.clientHeight;
+    rui.querySelector('.rui-progress i').style.width = `${max > 0 ? (stage.scrollTop / max) * 100 : 0}%`;
+  };
+  stage.addEventListener('scroll', () => reading && updateProgress(), { passive: true });
+  rui.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-r]');
+    if (!b) return;
+    const r = b.dataset.r;
+    if (r === 'exit') exitReading();
+    if (r === 'paper') setPaper({ white: 'sepia', sepia: 'night', night: 'white' }[state.paper] || 'white');
+    if (r === 'in') zoomAt(viewer.zoom * 1.15);
+    if (r === 'out') zoomAt(viewer.zoom / 1.15);
+    showRui(true);
+  });
+  // tocar na página mostra/esconde os controles
+  const onTap = () => reading && showRui(!rui.classList.contains('show'));
+  ctx.onTap = onTap;
+  stage.addEventListener('click', (e) => {
+    if (!reading || e.target.closest('a, button, input, textarea, select, [contenteditable="true"]')) return;
+    if (getSelection()?.toString()) return;
+    onTap();
+  });
+  function enterReading() {
+    if (reading) return;
+    reading = true;
+    closePopover();
+    hideSelectionMenu();
+    tools.set('read');
+    root.classList.add('reading');
+    viewer?.setReadingMode?.(true);
+    try {
+      window.history.pushState({ mrReading: 1 }, "");
+    } catch {}
+    document.documentElement.requestFullscreen?.().catch(() => {});
+    updateProgress();
+    showRui(true);
+    setTimeout(() => viewer?.onResize?.(), 120);
+    try {
+      if (!localStorage.getItem('mr-reading-tip')) {
+        toast('Modo leitura: toque na página para mostrar os controles.', { timeout: 3500 });
+        localStorage.setItem('mr-reading-tip', '1');
+      }
+    } catch {}
+  }
+  function exitReading(fromPop = false) {
+    if (!reading) return;
+    reading = false;
+    root.classList.remove('reading');
+    rui.classList.remove('show');
+    viewer?.setReadingMode?.(false);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (!fromPop && window.history.state?.mrReading) window.history.back();
+    setTimeout(() => viewer?.onResize?.(), 120);
+  }
+  // botão Voltar do Android/navegador sai do modo leitura
+  const onPop = () => reading && exitReading(true);
+  window.addEventListener('popstate', onPop);
 
   const onResize = debounce(() => viewer?.onResize?.(), 150);
   window.addEventListener('resize', onResize);
@@ -543,6 +636,8 @@ export async function openReader(app, id) {
     destroy() {
       document.querySelectorAll('.modal-backdrop, .present').forEach((m) => m.remove());
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('popstate', onPop);
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       window.removeEventListener('resize', onResize);
       window.removeEventListener('beforeunload', onBeforeUnload);
       document.removeEventListener('visibilitychange', onVis);

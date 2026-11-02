@@ -28,6 +28,8 @@ pontilhadas ou pauta musical para escrever à mão) e **Partitura** (ABC).
 - **Caneta** com sensibilidade à pressão (stylus) e rejeição da palma
 - **Marca-texto** com efeito real (o texto continua nítido por baixo): é só **arrastar o dedo por cima do texto** que ele marca na hora, encaixando em palavras inteiras (PDF, Word, EPUB). Fora do texto, risca à mão livre
 - **Borracha**, **Texto**, **Formas** (retângulo, elipse, linha, seta), cores e espessuras
+- **Modo leitura** (botão 📖 ou tecla `L`): tela cheia sem barras, toque na página para mostrar/ocultar os controles, cor do papel e tamanho; o Voltar do Android sai do modo leitura
+- **Abrir com MyReader** no Android: ele aparece na lista "Abrir com" e em "Compartilhar" para PDF, Word, PowerPoint, EPUB, planilhas, partituras, textos e imagens
 - **Desfazer/refazer**, zoom (botões, Ctrl+roda, pinça com 2 dedos), papel **branco / sépia / noturno**, tema claro/escuro
 - Tudo é salvo automaticamente
 

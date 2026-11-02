@@ -75,6 +75,17 @@ if ('launchQueue' in window) {
   });
 }
 
+// "Abrir com MyReader" no Android: se o mesmo arquivo já está na biblioteca, abre ele.
+import('./native.js').then(({ initOpenWith }) =>
+  initOpenWith(async (file) => {
+    const { db } = await import('./db.js');
+    const same = (await db.listFiles()).find((r) => r.name === file.name && r.size === file.size);
+    if (same) return go(`/doc/${same.id}`);
+    const recs = await importFiles([file]);
+    if (recs[0]) go(`/doc/${recs[0].id}`);
+  }),
+);
+
 // Service worker (offline / instalar como app)
 if (import.meta.env.PROD && !window.Capacitor?.isNativePlatform?.() && location.protocol === 'https:') {
   import('virtual:pwa-register').then(({ registerSW }) => registerSW({ immediate: true })).catch(() => {});

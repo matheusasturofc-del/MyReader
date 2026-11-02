@@ -35,3 +35,29 @@ export async function saveNative(blob, filename) {
     if (!savedDocs && !/cancel/i.test(String(e?.message || e))) throw e;
   }
 }
+
+/**
+ * "Abrir com MyReader" / "Compartilhar → MyReader" no Android.
+ * onFile(file: File) é chamado para cada arquivo recebido.
+ */
+export async function initOpenWith(onFile) {
+  if (!isNative()) return;
+  const { registerPlugin, Capacitor } = await import('@capacitor/core');
+  const OpenWith = registerPlugin('OpenWith');
+  await OpenWith.addListener('fileOpened', async (f) => {
+    if (f?.error) {
+      toast(`Não foi possível abrir o arquivo: ${f.error}`, { type: 'error', timeout: 5000 });
+      return;
+    }
+    if (!f?.path) return;
+    try {
+      const res = await fetch(Capacitor.convertFileSrc(f.path));
+      const blob = await res.blob();
+      await onFile(new File([blob], f.name || 'arquivo', { type: f.mime || blob.type || '' }));
+    } catch (e) {
+      toast(`Não foi possível abrir o arquivo: ${e?.message || e}`, { type: 'error', timeout: 5000 });
+    } finally {
+      OpenWith.release({ path: f.path }).catch(() => {});
+    }
+  });
+}

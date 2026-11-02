@@ -80,6 +80,11 @@ export default class AbcViewer {
     if (this.synth) this.loadSynth();
   }
 
+  setReadingMode(on) {
+    this.wrap.classList.toggle('reading', on);
+    this.applyZoom();
+  }
+
   applyZoom() {
     this.host.style.width = `${Math.min(900, this.ctx.stage.clientWidth - (innerWidth < 720 ? 16 : 64)) * this.zoom}px`;
   }

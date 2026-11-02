@@ -342,6 +342,14 @@ export default class DocViewer {
     inp.click();
   }
 
+  setReadingMode(on) {
+    if (on) this.paper.contentEditable = 'false';
+    else if (this.plain) {
+      this.paper.setAttribute('contenteditable', 'plaintext-only');
+      if (this.paper.contentEditable !== 'plaintext-only') this.paper.contentEditable = 'true';
+    } else this.paper.contentEditable = 'true';
+  }
+
   // ---------------------------------------------------------------- zoom
   applyZoom() {
     this.paper.style.zoom = this.zoom;
