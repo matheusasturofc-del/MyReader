@@ -2886,3 +2886,72 @@ body > .loading {
   background: var(--surface-2);
   color: var(--ink);
 }
+
+/* ================================================================ folha: com/sem página */
+.doc-host {
+  transition: width 0.25s;
+}
+.doc-host.flow {
+  box-shadow: none;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.doc-host.flow .paper {
+  min-height: 60vh;
+}
+.paper-night .doc-host.flow {
+  border-color: transparent;
+}
+.page-break {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 2px dashed rgba(109, 93, 252, 0.35);
+  pointer-events: none;
+  z-index: 2;
+}
+.page-break span {
+  position: absolute;
+  right: 10px;
+  top: -11px;
+  font: 600 11px var(--font);
+  color: #6d5dfc;
+  background: #fff;
+  padding: 2px 8px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(109, 93, 252, 0.3);
+}
+.paper-sizes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.paper-sizes button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+}
+.paper-sizes i {
+  height: 30px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  opacity: 0.5;
+}
+.paper-sizes b {
+  font-size: 13px;
+}
+.paper-sizes small {
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.paper-sizes button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}

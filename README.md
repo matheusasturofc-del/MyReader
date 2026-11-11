@@ -31,6 +31,7 @@ pontilhadas ou pauta musical para escrever à mão) e **Partitura** (ABC).
 - **Modo leitura** (botão 📖 ou tecla `L`): tela cheia sem barras, toque na página para mostrar/ocultar os controles, cor do papel e tamanho; o Voltar do Android sai do modo leitura
 - **Abrir com MyReader** no Android: ele aparece na lista "Abrir com" e em "Compartilhar" para PDF, Word, PowerPoint, EPUB, planilhas, partituras, textos e imagens
 - **Margem para anotações** (botão ⬚ no topo): escolha o tamanho (pequena, média, grande) e onde (direita, laterais, embaixo, todos os lados) — o app cria o espaço em branco em volta da página do PDF, slide, imagem ou partitura, e o PDF exportado sai com a margem
+- **Folha nos documentos**: ver **com página** (folhas e quebras de página) ou **sem página** (texto corrido), tamanho **A4, Carta, Ofício, A5, A3, B5** e retrato/paisagem — vai junto no `.docx` e na impressão. No caderno: tipo, tamanho e orientação da folha
 - **Margens da folha no Word**: Normal, **ABNT**, Estreita, Moderada, Larga ou personalizada em cm — vão junto no `.docx`
 - **Importar imagens** (ferramenta 🖼): toque na página, escolha a foto e ajuste posição e tamanho
 - **Desfazer/refazer**, zoom (botões, Ctrl+roda, pinça com 2 dedos), papel **branco / sépia / noturno**, tema claro/escuro

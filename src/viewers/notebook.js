@@ -3,9 +3,17 @@
 import { h, download, baseName } from '../util.js';
 import { icon } from '../icons.js';
 import { pagesToPdf, compositeAnnotations } from '../export/pdf-export.js';
-import { confirmDialog } from '../ui.js';
+import { confirmDialog, popover } from '../ui.js';
 
-const RATIO = 297 / 210; // A4
+// Tamanhos de folha do caderno (cm, retrato)
+const SIZES = [
+  ['a4', 'A4', 21, 29.7],
+  ['letter', 'Carta', 21.59, 27.94],
+  ['a5', 'A5', 14.8, 21],
+  ['legal', 'Ofício', 21.59, 35.56],
+  ['square', 'Quadrado', 21, 21],
+  ['wide', 'Tela 16:9', 29.7, 16.7],
+];
 const PATTERNS = [
   ['lined', 'Pautado'],
   ['grid', 'Quadriculado'],
@@ -99,6 +107,13 @@ export default class NotebookViewer {
     if (ctx.tools.tool === 'read') ctx.tools.set('pen');
   }
 
+  /** Tamanho da folha em cm (com orientação). */
+  get dims() {
+    const z = SIZES.find((x) => x[0] === (this.nb.size || 'a4')) || SIZES[0];
+    const [w, hh] = [z[2], z[3]];
+    return this.nb.orient === 'landscape' ? { w: Math.max(w, hh), h: Math.min(w, hh) } : { w, h: hh };
+  }
+
   get width() {
     return Math.min(900, this.ctx.stage.clientWidth - (innerWidth < 720 ? 16 : 64)) * this.zoom;
   }
@@ -120,7 +135,7 @@ export default class NotebookViewer {
 
   layout() {
     const W = Math.round(this.width);
-    const H = Math.round(W * RATIO);
+    const H = Math.round((W * this.dims.h) / this.dims.w);
     const dpr = Math.min(devicePixelRatio || 1, 2);
     for (const host of this.hosts) {
       host.style.width = `${W}px`;
@@ -166,13 +181,37 @@ export default class NotebookViewer {
   }
 
   buildSlot() {
-    const sel = h(`<label class="nb-pattern">${icon('grid', 16)}<select aria-label="Tipo de folha">${PATTERNS.map(([v, l]) => `<option value="${v}" ${v === this.nb.pattern ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`);
-    sel.querySelector('select').onchange = (e) => {
-      this.nb.pattern = e.target.value;
+    const btn = h(`<button class="btn btn-soft btn-sm" title="Folha: tipo, tamanho e orientação">${icon('file-text', 17)}<span class="hide-sm">Folha</span></button>`);
+    btn.onclick = () => this.sheetPop(btn);
+    this.ctx.slot.appendChild(btn);
+  }
+
+  sheetPop(btn) {
+    const panel = h(`
+      <div class="tool-panel margin-panel">
+        <div class="tp-title">${icon('file-text', 16)} Folha do caderno</div>
+        <div class="tp-label">Tipo</div>
+        <div class="paper-sizes" data-g="pattern">${PATTERNS.map(([v, l]) => `<button data-v="${v}"><b>${l}</b></button>`).join('')}</div>
+        <div class="tp-label">Tamanho</div>
+        <div class="paper-sizes" data-g="size">${SIZES.map(([v, l, w, hh]) => `<button data-v="${v}"><i style="aspect-ratio:${w}/${hh}"></i><b>${l}</b></button>`).join('')}</div>
+        <div class="tp-label">Orientação</div>
+        <div class="seg" data-g="orient"><button data-v="portrait">Retrato</button><button data-v="landscape">Paisagem</button></div>
+      </div>`);
+    popover(btn, panel, { align: 'end' });
+    const cur = () => ({ pattern: this.nb.pattern, size: this.nb.size || 'a4', orient: this.nb.orient || 'portrait' });
+    const sync = () => {
+      const c = cur();
+      panel.querySelectorAll('[data-g]').forEach((g) => g.querySelectorAll('[data-v]').forEach((x) => x.classList.toggle('on', x.dataset.v === c[g.dataset.g])));
+    };
+    sync();
+    panel.addEventListener('click', (e) => {
+      const x = e.target.closest('[data-v]');
+      if (!x) return;
+      this.nb[x.closest('[data-g]').dataset.g] = x.dataset.v;
       this.ctx.saveState();
       this.layout();
-    };
-    this.ctx.slot.appendChild(sel);
+      sync();
+    });
   }
 
   exports() {
@@ -183,9 +222,10 @@ export default class NotebookViewer {
         icon: 'file-down',
         hint: '.pdf',
         run: async () => {
+          const PT = 28.3465; // pontos por cm
           const pages = Array.from({ length: this.nb.pages }, (_, i) => ({
-            width: 595,
-            height: 842,
+            width: this.dims.w * PT,
+            height: this.dims.h * PT,
             draw: (x, pw, ph) => {
               drawPattern(x, pw, ph, this.nb.pattern);
               compositeAnnotations(x, this.ctx.ann.pages[`n${i + 1}`], pw, ph);

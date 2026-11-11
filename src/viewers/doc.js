@@ -15,6 +15,17 @@ const SANITIZE = {
 
 const clean = (html) => DOMPurify.sanitize(html, SANITIZE);
 
+const CM = 37.8; // px por cm na tela (96 dpi)
+// Tamanhos de folha (cm, retrato)
+const PAPER_SIZES = [
+  { id: 'a4', label: 'A4', w: 21, h: 29.7 },
+  { id: 'letter', label: 'Carta', w: 21.59, h: 27.94 },
+  { id: 'legal', label: 'Ofício', w: 21.59, h: 35.56 },
+  { id: 'a5', label: 'A5', w: 14.8, h: 21 },
+  { id: 'a3', label: 'A3', w: 29.7, h: 42 },
+  { id: 'b5', label: 'B5', w: 17.6, h: 25 },
+];
+
 // Predefinições de margem (cm), como no Word — e a ABNT, usada em trabalhos no Brasil.
 const DOC_MARGINS = [
   { label: 'Normal', hint: '2,5 cm em todos os lados', m: { t: 2.5, r: 2.5, b: 2.5, l: 2.5 } },
@@ -57,7 +68,9 @@ export default class DocViewer {
     ctx.content.classList.add('doc-content');
     ctx.content.appendChild(this.host);
     this.applyZoom();
-    this.applyMargins();
+    this.applySheet();
+    this.ro = new ResizeObserver(() => this.updateBreaks());
+    this.ro.observe(this.paper);
     ctx.ann.attach(this.host, 'doc');
     if (!this.plain) {
       // Marca-texto arrastando o dedo: vira destaque de verdade no texto (vai junto no .docx).
@@ -259,6 +272,7 @@ export default class DocViewer {
         <span class="fmt-sep"></span>
         ${b('image', 'image-plus', 'Inserir imagem')}${b('removeFormat', 'clear-format', 'Limpar formatação')}
         <span class="fmt-sep"></span>
+        <button class="fmt fmt-wide" data-pop="sheet" title="Folha: com/sem página, tamanho e orientação" aria-label="Folha">${icon('file-text', 18)}<span>Folha</span></button>
         <button class="fmt fmt-wide" data-pop="margins" title="Margens da folha" aria-label="Margens da folha">${icon('ruler', 18)}<span>Margens</span></button>
       </div>`);
     this.ctx.sub.appendChild(bar);
@@ -272,6 +286,7 @@ export default class DocViewer {
       if (!btn) return;
       const cmd = btn.dataset.cmd;
       if (btn.dataset.pop === 'margins') return this.marginPop(btn);
+      if (btn.dataset.pop === 'sheet') return this.sheetPop(btn);
       if (btn.dataset.pop) return this.colorPop(btn, btn.dataset.pop);
       if (cmd === 'image') return this.insertImage();
       if (cmd === 'removeFormat') {
@@ -376,7 +391,7 @@ export default class DocViewer {
       return;
     }
     // em % da largura da folha (A4 = 21 cm), assim fica proporcional no celular também
-    const pct = (cm) => `${((cm / 21) * 100).toFixed(2)}%`;
+    const pct = (cm) => `${((cm / this.dims.w) * 100).toFixed(2)}%`;
     this.paper.style.padding = `${pct(m.t)} ${pct(m.r)} ${pct(m.b)} ${pct(m.l)}`;
   }
   marginPop(btn) {
@@ -422,8 +437,93 @@ export default class DocViewer {
     });
   }
 
+  // ---------------------------------------------------------------- folha: com/sem página, tamanho
+  get sheet() {
+    return { mode: 'page', size: 'a4', orient: 'portrait', ...(this.ctx.state.docSheet || {}) };
+  }
+  /** Tamanho da folha em cm, já considerando a orientação. */
+  get dims() {
+    const sz = PAPER_SIZES.find((p) => p.id === this.sheet.size) || PAPER_SIZES[0];
+    return this.sheet.orient === 'landscape' ? { w: sz.h, h: sz.w } : { w: sz.w, h: sz.h };
+  }
+  applySheet() {
+    const paged = this.sheet.mode === 'page';
+    const gutter = innerWidth < 720 ? 16 : 64;
+    this.host.classList.toggle('paged', paged);
+    this.host.classList.toggle('flow', !paged);
+    this.host.style.width = paged ? `min(${Math.round(this.dims.w * CM)}px, calc(100vw - ${gutter}px))` : `min(980px, calc(100vw - ${gutter}px))`;
+    this.applyMargins();
+    this.updateBreaks();
+  }
+  /** Mostra onde cada página termina (a paginação exata acontece no Word/PDF exportado). */
+  updateBreaks() {
+    if (!this.paper) return;
+    this.host.querySelectorAll('.page-break').forEach((b) => b.remove());
+    if (this.sheet.mode !== 'page') {
+      this.paper.style.minHeight = '';
+      return;
+    }
+    const ratio = this.dims.h / this.dims.w;
+    const cssPage = this.paper.offsetWidth * ratio; // altura de 1 página (px, sem zoom)
+    if (!cssPage) return;
+    this.paper.style.minHeight = '';
+    const content = this.paper.offsetHeight;
+    const pages = Math.max(1, Math.ceil(content / cssPage - 0.01));
+    this.paper.style.minHeight = `${pages * cssPage}px`;
+    const shown = this.paper.getBoundingClientRect().width * ratio; // com zoom
+    for (let i = 1; i < pages; i++) {
+      const b = document.createElement('div');
+      b.className = 'page-break';
+      b.style.top = `${this.paper.offsetTop + i * shown}px`;
+      b.innerHTML = `<span>Página ${i + 1}</span>`;
+      this.host.appendChild(b);
+    }
+    this.host.dataset.pages = pages;
+  }
+  sheetPop(btn) {
+    const panel = h(`
+      <div class="tool-panel margin-panel">
+        <div class="tp-title">${icon('file-text', 16)} Folha</div>
+        <div class="seg" data-g="mode">
+          <button data-v="page">${icon('file-text', 15)} Com página</button>
+          <button data-v="flow">${icon('align-left', 15)} Sem página</button>
+        </div>
+        <p class="tp-hint" data-hint></p>
+        <div class="tp-label">Tamanho da folha</div>
+        <div class="paper-sizes" data-g="size">
+          ${PAPER_SIZES.map((p) => `<button data-v="${p.id}"><i style="aspect-ratio:${p.w}/${p.h}"></i><b>${p.label}</b><small>${String(p.w).replace('.', ',')} × ${String(p.h).replace('.', ',')} cm</small></button>`).join('')}
+        </div>
+        <div class="tp-label">Orientação</div>
+        <div class="seg" data-g="orient">
+          <button data-v="portrait">Retrato</button>
+          <button data-v="landscape">Paisagem</button>
+        </div>
+      </div>`);
+    popover(btn, panel, { align: 'end' });
+    const sync = () => {
+      const sh = this.sheet;
+      panel.querySelectorAll('[data-g]').forEach((g) => g.querySelectorAll('[data-v]').forEach((b) => b.classList.toggle('on', b.dataset.v === sh[g.dataset.g])));
+      panel.querySelector('[data-hint]').textContent =
+        sh.mode === 'page'
+          ? 'Mostra as folhas e onde cada página termina. Ao salvar em .docx/PDF, sai com esse tamanho de folha.'
+          : 'Texto corrido, sem folhas — ótimo para ler e escrever no celular. O tamanho da folha vale ao salvar em .docx/PDF.';
+    };
+    sync();
+    panel.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-v]');
+      if (!b) return;
+      const g = b.closest('[data-g]').dataset.g;
+      this.ctx.state.docSheet = { ...this.sheet, [g]: b.dataset.v };
+      if (g !== 'mode') this.ctx.state.docSheet.mode = 'page';
+      this.ctx.saveState();
+      this.applySheet();
+      sync();
+    });
+  }
+
   applyZoom() {
     this.paper.style.zoom = this.zoom;
+    this.updateBreaks?.();
   }
   setZoom(z) {
     this.zoom = z;
@@ -443,7 +543,7 @@ export default class DocViewer {
         hint: '.docx',
         run: async () => {
           const { htmlToDocx } = await import('../export/docx-export.js');
-          download(await htmlToDocx(this.paper, { title: name, margins: this.margins }), `${name}.docx`);
+          download(await htmlToDocx(this.paper, { title: name, margins: this.margins, page: { ...this.dims, orient: this.sheet.orient } }), `${name}.docx`);
         },
       });
     }
@@ -480,7 +580,7 @@ export default class DocViewer {
     document.body.appendChild(frame);
     const d = frame.contentDocument;
     d.open();
-    d.write(this.standaloneHtml(baseName(this.ctx.rec.name)).replace('</style>', `@page{margin:${this.margins ? `${this.margins.t}cm ${this.margins.r}cm ${this.margins.b}cm ${this.margins.l}cm` : '2.5cm'}}body{margin:0;max-width:none}mark,[style*="background"]{-webkit-print-color-adjust:exact;print-color-adjust:exact}</style>`));
+    d.write(this.standaloneHtml(baseName(this.ctx.rec.name)).replace('</style>', `@page{size:${this.dims.w}cm ${this.dims.h}cm;margin:${this.margins ? `${this.margins.t}cm ${this.margins.r}cm ${this.margins.b}cm ${this.margins.l}cm` : '2.5cm'}}body{margin:0;max-width:none}mark,[style*="background"]{-webkit-print-color-adjust:exact;print-color-adjust:exact}</style>`));
     d.close();
     setTimeout(() => {
       frame.contentWindow.focus();
@@ -496,7 +596,12 @@ export default class DocViewer {
     this.save?.flush();
   }
 
+  onResize() {
+    this.applySheet();
+  }
+
   destroy() {
+    this.ro?.disconnect();
     document.removeEventListener('selectionchange', this.onSel);
     hideSelectionMenu();
   }

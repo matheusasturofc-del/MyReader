@@ -3,7 +3,7 @@
 // alinhamento, listas, citações, tabelas e imagens.
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, ImageRun, Table, TableRow,
-  TableCell, WidthType, ShadingType, LevelFormat, ExternalHyperlink, BorderStyle,
+  TableCell, WidthType, ShadingType, LevelFormat, ExternalHyperlink, BorderStyle, PageOrientation,
 } from 'docx';
 import { dataUrlToBytes, loadImage } from '../util.js';
 
@@ -257,7 +257,7 @@ async function blocks(root, ctx, base = {}, listLevel = -1, listType = null) {
   return out;
 }
 
-export async function htmlToDocx(root, { title = 'Documento', margins = null } = {}) {
+export async function htmlToDocx(root, { title = 'Documento', margins = null, page = null } = {}) {
   const ctx = {};
   const children = await blocks(root, ctx);
   const levels = Array.from({ length: 9 }, (_, i) => ({
@@ -276,9 +276,23 @@ export async function htmlToDocx(root, { title = 'Documento', margins = null } =
     numbering: { config: [{ reference: 'mr-numbered', levels }] },
     sections: [
       {
-        properties: margins
-          ? { page: { margin: { top: Math.round(margins.t * 567), right: Math.round(margins.r * 567), bottom: Math.round(margins.b * 567), left: Math.round(margins.l * 567) } } }
-          : {},
+        properties: {
+          page: {
+            ...(page
+              ? {
+                  // docx guarda largura/altura em retrato e a orientação à parte
+                  size: {
+                    width: Math.round(Math.min(page.w, page.h) * 567),
+                    height: Math.round(Math.max(page.w, page.h) * 567),
+                    orientation: page.orient === 'landscape' ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT,
+                  },
+                }
+              : {}),
+            ...(margins
+              ? { margin: { top: Math.round(margins.t * 567), right: Math.round(margins.r * 567), bottom: Math.round(margins.b * 567), left: Math.round(margins.l * 567) } }
+              : {}),
+          },
+        },
         children: children.length ? children : [new Paragraph('')],
       },
     ],
