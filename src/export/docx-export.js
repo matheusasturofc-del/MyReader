@@ -257,7 +257,7 @@ async function blocks(root, ctx, base = {}, listLevel = -1, listType = null) {
   return out;
 }
 
-export async function htmlToDocx(root, { title = 'Documento' } = {}) {
+export async function htmlToDocx(root, { title = 'Documento', margins = null } = {}) {
   const ctx = {};
   const children = await blocks(root, ctx);
   const levels = Array.from({ length: 9 }, (_, i) => ({
@@ -274,7 +274,14 @@ export async function htmlToDocx(root, { title = 'Documento' } = {}) {
       default: { document: { run: { font: 'Calibri', size: 24 } } },
     },
     numbering: { config: [{ reference: 'mr-numbered', levels }] },
-    sections: [{ properties: {}, children: children.length ? children : [new Paragraph('')] }],
+    sections: [
+      {
+        properties: margins
+          ? { page: { margin: { top: Math.round(margins.t * 567), right: Math.round(margins.r * 567), bottom: Math.round(margins.b * 567), left: Math.round(margins.l * 567) } } }
+          : {},
+        children: children.length ? children : [new Paragraph('')],
+      },
+    ],
   });
   return Packer.toBlob(doc);
 }

@@ -21,7 +21,33 @@ const DEFAULTS = {
   eraser: { size: 14 },
 };
 
-export const DRAW_TOOLS = new Set(['pen', 'highlighter', 'eraser', 'text', 'shape']);
+export const DRAW_TOOLS = new Set(['pen', 'highlighter', 'eraser', 'text', 'shape', 'image']);
+
+/** Margem extra em volta da página, em unidades (largura da página = 1000). */
+export const NO_MARGIN = { l: 0, t: 0, r: 0, b: 0 };
+
+// ---------------------------------------------------------------- imagens importadas
+const imgCache = new Map(); // src -> HTMLImageElement
+const imgWaiters = new Set();
+export function onImagesLoaded(fn) {
+  imgWaiters.add(fn);
+  return () => imgWaiters.delete(fn);
+}
+export function getImage(src) {
+  let img = imgCache.get(src);
+  if (!img) {
+    img = new Image();
+    img.onload = () => imgWaiters.forEach((f) => f());
+    img.src = src;
+    imgCache.set(src, img);
+  }
+  return img;
+}
+/** Garante que as imagens das anotações estão carregadas (antes de exportar). */
+export async function ensureImages(pages) {
+  const all = Object.values(pages || {}).flat().filter((s) => s?.t === 'img');
+  await Promise.all(all.map((s) => getImage(s.src).decode().catch(() => {})));
+}
 
 /** Estado global da ferramenta atual (compartilhado entre páginas). */
 export class ToolState extends EventTarget {
@@ -203,6 +229,12 @@ function drawShape(ctx, s, k) {
 
 export const TEXT_FONT = '"Inter Variable", Inter, system-ui, sans-serif';
 
+function drawImageShape(ctx, s, k) {
+  const img = getImage(s.src);
+  if (!img.complete || !img.naturalWidth) return;
+  ctx.drawImage(img, s.x * k, s.y * k, s.w * k, s.h * k);
+}
+
 function drawText(ctx, s, k) {
   ctx.fillStyle = s.c;
   ctx.font = `500 ${s.s * k}px ${TEXT_FONT}`;
@@ -222,6 +254,7 @@ export function drawShapes(ctx, shapes, k, layer) {
     else if (s.t === 'hlrect') drawHlRects(ctx, s, k);
     else if (s.t === 'shape') drawShape(ctx, s, k);
     else if (s.t === 'text') drawText(ctx, s, k);
+    else if (s.t === 'img') drawImageShape(ctx, s, k);
     ctx.restore();
   }
 }
@@ -230,8 +263,8 @@ export function drawShapes(ctx, shapes, k, layer) {
  * Renderiza as anotações de uma página em canvases de tamanho arbitrário (exportação).
  * Retorna { hl, ink } — o 'hl' deve ser composto com "multiply".
  */
-export function renderShapesToCanvases(shapes, width, height) {
-  const k = width / UNIT;
+export function renderShapesToCanvases(shapes, width, height, m = NO_MARGIN) {
+  const k = width / (UNIT + m.l + m.r);
   const mk = () => {
     const c = document.createElement('canvas');
     c.width = Math.round(width);
@@ -240,8 +273,14 @@ export function renderShapesToCanvases(shapes, width, height) {
   };
   const hl = mk(),
     ink = mk();
-  drawShapes(hl.getContext('2d'), shapes, k, 'hl');
-  drawShapes(ink.getContext('2d'), shapes, k, 'ink');
+  for (const [c, layer] of [
+    [hl, 'hl'],
+    [ink, 'ink'],
+  ]) {
+    const x = c.getContext('2d');
+    x.translate(m.l * k, m.t * k);
+    drawShapes(x, shapes, k, layer);
+  }
   return { hl, ink };
 }
 
@@ -267,6 +306,7 @@ function hit(s, x, y, r) {
     return false;
   }
   if (s.t === 'hlrect') return s.rects.some(([rx, ry, w, hh]) => x > rx - r && x < rx + w + r && y > ry - r && y < ry + hh + r);
+  if (s.t === 'img') return x > s.x - r && x < s.x + s.w + r && y > s.y - r && y < s.y + s.h + r;
   if (s.t === 'text') return x > s.x - r && x < s.x + (s.bw || 50) + r && y > s.y - r && y < s.y + (s.bh || s.s) + r;
   if (s.t === 'shape') {
     const { x1, y1, x2, y2 } = s;
@@ -309,6 +349,9 @@ export class AnnotationManager {
     this.layers = new Map();
     this.scroller = scroller;
     this.penSeen = false;
+    this.margin = { ...NO_MARGIN };
+    this._offImg = onImagesLoaded(() => this.layers.forEach((l) => l.redraw()));
+    ensureImages(pages);
     this._onTool = () => this.layers.forEach((l) => l.updateMode());
     tools.addEventListener('change', this._onTool);
   }
@@ -397,7 +440,49 @@ export class AnnotationManager {
   resizeAll() {
     this.layers.forEach((l) => l.resize());
   }
+  /** Escolhe uma imagem do aparelho e coloca na página (reduzida para no máx. 1600 px). */
+  pickImage(layer, x, y) {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.onchange = async () => {
+      const f = inp.files?.[0];
+      if (!f) return;
+      const url = URL.createObjectURL(f);
+      try {
+        const img = new Image();
+        img.src = url;
+        await img.decode();
+        const max = 1600;
+        const sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.naturalWidth * sc);
+        c.height = Math.round(img.naturalHeight * sc);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const png = /png|gif|webp|svg/.test(f.type);
+        const src = c.toDataURL(png ? 'image/png' : 'image/jpeg', 0.88);
+        getImage(src);
+        layer.addImage(src, c.width, c.height, x, y);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    inp.click();
+  }
+  setMargin(m) {
+    this.margin = { ...NO_MARGIN, ...m };
+    this.layers.forEach((l) => {
+      l.w = 0; // força recalcular
+      l.resize();
+    });
+  }
+  /** Retângulos (em unidades da página) de um trecho de texto selecionado. */
+  rectsFor(key, range) {
+    const l = this.layers.get(key);
+    return l ? rangeToRects(range, l.host, l.geom()) : [];
+  }
   destroy() {
+    this._offImg?.();
     this.tools.removeEventListener('change', this._onTool);
     this.layers.forEach((l) => l.destroy());
     this.layers.clear();
@@ -429,7 +514,13 @@ export class AnnotationLayer {
     return this.m.shapes(this.key);
   }
   get k() {
-    return this.w / UNIT;
+    const m = this.m.margin;
+    return this.w / (UNIT + m.l + m.r);
+  }
+  /** Geometria: pixels por unidade e deslocamento da página dentro da margem. */
+  geom() {
+    const k = this.k;
+    return { k, ox: this.m.margin.l * k, oy: this.m.margin.t * k };
   }
   resize() {
     const w = this.host.clientWidth,
@@ -446,9 +537,13 @@ export class AnnotationLayer {
     }
     this.redraw();
   }
+  /** Contexto já posicionado na página (desconta a margem). */
   ctx(c) {
     const x = c.getContext('2d');
-    x.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    x.setTransform(1, 0, 0, 1, 0, 0);
+    x.clearRect(0, 0, c.width, c.height);
+    const { ox, oy } = this.geom();
+    x.setTransform(this.dpr, 0, 0, this.dpr, ox * this.dpr, oy * this.dpr);
     return x;
   }
   redraw() {
@@ -458,7 +553,6 @@ export class AnnotationLayer {
       [this.ink, 'ink'],
     ]) {
       const x = this.ctx(c);
-      x.clearRect(0, 0, this.w, this.h);
       drawShapes(x, this.shapes, this.k, layer);
     }
   }
@@ -472,7 +566,9 @@ export class AnnotationLayer {
   // ----------------------------------------------------------- entrada
   pos(e) {
     const r = this.live.getBoundingClientRect();
-    return [((e.clientX - r.left) * UNIT) / r.width, ((e.clientY - r.top) * UNIT) / r.width];
+    const m = this.m.margin;
+    const k = r.width / (UNIT + m.l + m.r);
+    return [(e.clientX - r.left) / k - m.l, (e.clientY - r.top) / k - m.t];
   }
   bind() {
     const el = this.live;
@@ -517,6 +613,8 @@ export class AnnotationLayer {
       this.m.onEraseText?.(this, e.clientX, e.clientY);
     } else if (tool === 'text') {
       this.textDown = [x, y];
+    } else if (tool === 'image') {
+      this.imageDown = [x, y];
     }
     this.drawLive();
   }
@@ -582,6 +680,15 @@ export class AnnotationLayer {
       this.openTextEditor(x, y);
       return;
     }
+    if (this.imageDown) {
+      const [x, y] = this.imageDown;
+      this.imageDown = null;
+      if (Date.now() - (this.m.lastImageEdit || 0) < 500) return; // o toque só fechou o editor
+      const existing = this.shapes.findLast?.((s) => s.t === 'img' && hit(s, x, y, 0));
+      if (existing) this.editImage(existing);
+      else this.m.pickImage?.(this, x, y);
+      return;
+    }
     if (this.textHl) {
       const th = this.textHl;
       this.textHl = null;
@@ -589,7 +696,7 @@ export class AnnotationLayer {
       const range = makeRange(th.start, th.end);
       if (!range || range.collapsed) return;
       if (this.m.onTextHighlight?.(this, range, th.color)) return; // o visualizador cuidou (ex.: Word)
-      const rects = rangeToRects(range, this.host);
+      const rects = rangeToRects(range, this.host, this.geom());
       if (rects.length) this.m.add(this.key, { t: 'hlrect', c: th.color, rects });
       return;
     }
@@ -606,18 +713,18 @@ export class AnnotationLayer {
     this.textHl = null;
     this.erasing = false;
     this.textDown = null;
+    this.imageDown = null;
     this.pointerId = null;
     this.clearLive();
   }
   clearLive() {
     if (!this.w) return;
-    this.ctx(this.live).clearRect(0, 0, this.w, this.h);
+    this.ctx(this.live);
   }
   drawLive() {
     const c = this.current;
     if (!c || !this.w) return;
     const x = this.ctx(this.live);
-    x.clearRect(0, 0, this.w, this.h);
     if (c.t === 'hl') {
       // Prévia translúcida; ao soltar entra no canvas "multiply".
       x.globalAlpha = 0.55;
@@ -627,21 +734,20 @@ export class AnnotationLayer {
   drawTextHl() {
     if (!this.w || !this.textHl) return;
     const x = this.ctx(this.live);
-    x.clearRect(0, 0, this.w, this.h);
     const range = makeRange(this.textHl.start, this.textHl.end);
     if (!range) return;
-    const rects = rangeToRects(range, this.host);
+    const rects = rangeToRects(range, this.host, this.geom());
     x.globalAlpha = 0.5;
     drawHlRects(x, { c: this.textHl.color, rects }, this.k);
   }
   drawEraserCursor(e) {
     if (!this.w) return;
     const x = this.ctx(this.live);
-    x.clearRect(0, 0, this.w, this.h);
     const r = this.live.getBoundingClientRect();
     const rad = (this.m.tools.settings.eraser.size * this.k) / 1;
     x.beginPath();
-    x.arc(e.clientX - r.left, e.clientY - r.top, rad, 0, Math.PI * 2);
+    const g = this.geom();
+    x.arc(e.clientX - r.left - g.ox, e.clientY - r.top - g.oy, rad, 0, Math.PI * 2);
     x.fillStyle = 'rgba(120,120,140,0.15)';
     x.strokeStyle = 'rgba(80,80,100,0.6)';
     x.lineWidth = 1;
@@ -658,6 +764,84 @@ export class AnnotationLayer {
     }
   }
 
+  // ----------------------------------------------------------- imagens
+  /** Adiciona uma imagem (dataURL) centrada em (x,y) e já abre para ajustar. */
+  addImage(src, natW, natH, x, y) {
+    const pageH = (this.h / this.k) - this.m.margin.t - this.m.margin.b;
+    let w = Math.min(450, natW);
+    let hh = (w * natH) / natW;
+    if (hh > pageH * 0.6) {
+      hh = pageH * 0.6;
+      w = (hh * natW) / natH;
+    }
+    const shape = { t: 'img', src, x: +(x - w / 2).toFixed(1), y: +(y - hh / 2).toFixed(1), w: +w.toFixed(1), h: +hh.toFixed(1) };
+    this.m.add(this.key, shape);
+    this.editImage(shape);
+  }
+
+  /** Caixa para mover/redimensionar/apagar uma imagem importada. */
+  editImage(shape) {
+    this.host.querySelector('.img-editor')?.remove();
+    const idx = this.shapes.indexOf(shape);
+    if (idx < 0) return;
+    const orig = { ...shape };
+    const box = document.createElement('div');
+    box.className = 'img-editor';
+    box.innerHTML = `<img alt=""><span class="ie-handle" data-h="se"></span><div class="ie-bar"><button data-a="del" title="Apagar imagem">🗑</button><button data-a="ok" title="Pronto">✓</button></div>`;
+    box.querySelector('img').src = shape.src;
+    this.host.appendChild(box);
+    // esconde a imagem do canvas enquanto edita
+    const temp = { ...shape };
+    const others = this.shapes.filter((s) => s !== shape);
+    this.m.pages[this.key] = others;
+    this.redraw();
+    const place = () => {
+      const { k, ox, oy } = this.geom();
+      Object.assign(box.style, { left: `${temp.x * k + ox}px`, top: `${temp.y * k + oy}px`, width: `${temp.w * k}px`, height: `${temp.h * k}px` });
+    };
+    place();
+    let drag = null;
+    box.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      box.setPointerCapture(e.pointerId);
+      drag = { mode: e.target.dataset.h ? 'resize' : 'move', sx: e.clientX, sy: e.clientY, start: { ...temp } };
+    });
+    box.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const k = this.k;
+      const dx = (e.clientX - drag.sx) / k,
+        dy = (e.clientY - drag.sy) / k;
+      if (drag.mode === 'move') {
+        temp.x = +(drag.start.x + dx).toFixed(1);
+        temp.y = +(drag.start.y + dy).toFixed(1);
+      } else {
+        const ratio = drag.start.h / drag.start.w;
+        temp.w = +Math.max(30, drag.start.w + dx).toFixed(1);
+        temp.h = +(temp.w * ratio).toFixed(1);
+      }
+      place();
+    });
+    box.addEventListener('pointerup', () => (drag = null));
+    const finish = (del) => {
+      this.m.lastImageEdit = Date.now();
+      box.remove();
+      document.removeEventListener('pointerdown', outside, true);
+      const before = [...others.slice(0, idx), orig, ...others.slice(idx)];
+      this.m.pages[this.key] = before;
+      const after = del ? others : [...others.slice(0, idx), temp, ...others.slice(idx)];
+      if (JSON.stringify(after) !== JSON.stringify(before)) this.m.commit(this.key, after);
+      else this.redraw();
+    };
+    const outside = (e) => {
+      if (!box.contains(e.target)) finish(false);
+    };
+    setTimeout(() => document.addEventListener('pointerdown', outside, true));
+    box.querySelector('[data-a="del"]').onclick = () => finish(true);
+    box.querySelector('[data-a="ok"]').onclick = () => finish(false);
+  }
+
   // ----------------------------------------------------------- texto
   openTextEditor(x, y) {
     const existing = this.shapes.findLast?.((s) => s.t === 'text' && hit(s, x, y, 2));
@@ -668,14 +852,14 @@ export class AnnotationLayer {
       this.m.pages[this.key] = this.shapes.filter((s) => s !== existing);
       this.redraw();
     }
-    const k = this.k;
+    const { k, ox, oy } = this.geom();
     const ta = document.createElement('textarea');
     ta.className = 'ann-text-editor';
     ta.value = shape.text;
     ta.placeholder = 'Escreva aqui…';
     Object.assign(ta.style, {
-      left: `${shape.x * k}px`,
-      top: `${shape.y * k}px`,
+      left: `${shape.x * k + ox}px`,
+      top: `${shape.y * k + oy}px`,
       fontSize: `${shape.s * k}px`,
       color: shape.c,
       fontFamily: TEXT_FONT,
@@ -685,7 +869,7 @@ export class AnnotationLayer {
       ta.style.height = 'auto';
       ta.style.width = 'auto';
       ta.style.height = `${ta.scrollHeight + 2}px`;
-      ta.style.width = `${Math.min(this.w - shape.x * k, Math.max(120, ta.scrollWidth + 8))}px`;
+      ta.style.width = `${Math.min(this.w - shape.x * k - ox, Math.max(120, ta.scrollWidth + 8))}px`;
     };
     ta.addEventListener('input', grow);
     ta.focus({ preventScroll: true });
@@ -774,9 +958,12 @@ export function makeRange(a, b) {
  * Converte uma seleção de texto (Range) em retângulos de marca-texto
  * relativos a um elemento-página. Junta pedaços da mesma linha.
  */
-export function rangeToRects(range, pageEl) {
+export function rangeToRects(range, pageEl, geom) {
   const pr = pageEl.getBoundingClientRect();
-  const k = UNIT / pr.width;
+  // px -> unidades (descontando a margem, se houver)
+  const k = geom ? 1 / geom.k : UNIT / pr.width;
+  const ox = geom ? geom.ox : 0,
+    oy = geom ? geom.oy : 0;
   const raw = [...range.getClientRects()]
     .filter((r) => r.width > 1 && r.height > 1)
     .map((r) => {
@@ -784,7 +971,7 @@ export function rangeToRects(range, pageEl) {
         right = Math.min(r.right, pr.right);
       const top = Math.max(r.top, pr.top),
         bottom = Math.min(r.bottom, pr.bottom);
-      return right > left && bottom > top ? [(left - pr.left) * k, (top - pr.top) * k, (right - left) * k, (bottom - top) * k] : null;
+      return right > left && bottom > top ? [(left - pr.left - ox) * k, (top - pr.top - oy) * k, (right - left) * k, (bottom - top) * k] : null;
     })
     .filter(Boolean)
     .sort((a, b) => a[1] - b[1] || a[0] - b[0]);

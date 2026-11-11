@@ -15,6 +15,16 @@ const SANITIZE = {
 
 const clean = (html) => DOMPurify.sanitize(html, SANITIZE);
 
+// Predefinições de margem (cm), como no Word — e a ABNT, usada em trabalhos no Brasil.
+const DOC_MARGINS = [
+  { label: 'Normal', hint: '2,5 cm em todos os lados', m: { t: 2.5, r: 2.5, b: 2.5, l: 2.5 } },
+  { label: 'ABNT', hint: 'Sup./esq. 3 cm · inf./dir. 2 cm', m: { t: 3, r: 2, b: 2, l: 3 } },
+  { label: 'Estreita', hint: '1,27 cm em todos os lados', m: { t: 1.27, r: 1.27, b: 1.27, l: 1.27 } },
+  { label: 'Moderada', hint: 'Sup./inf. 2,54 · laterais 1,91', m: { t: 2.54, r: 1.91, b: 2.54, l: 1.91 } },
+  { label: 'Larga', hint: 'Sup./inf. 2,54 · laterais 5,08', m: { t: 2.54, r: 5.08, b: 2.54, l: 5.08 } },
+  { label: 'Sem margem', hint: '0,5 cm', m: { t: 0.5, r: 0.5, b: 0.5, l: 0.5 } },
+];
+
 const TEXT_COLORS = ['#1b1b1f', '#5c5f66', '#e03131', '#f08c00', '#2f9e44', '#1971c2', '#7048e8', '#c2255c'];
 
 export default class DocViewer {
@@ -47,6 +57,7 @@ export default class DocViewer {
     ctx.content.classList.add('doc-content');
     ctx.content.appendChild(this.host);
     this.applyZoom();
+    this.applyMargins();
     ctx.ann.attach(this.host, 'doc');
     if (!this.plain) {
       // Marca-texto arrastando o dedo: vira destaque de verdade no texto (vai junto no .docx).
@@ -247,6 +258,8 @@ export default class DocViewer {
         ${b('insertUnorderedList', 'list', 'Lista')}${b('insertOrderedList', 'list-ordered', 'Lista numerada')}${b('outdent', 'outdent', 'Diminuir recuo')}${b('indent', 'indent', 'Aumentar recuo')}
         <span class="fmt-sep"></span>
         ${b('image', 'image-plus', 'Inserir imagem')}${b('removeFormat', 'clear-format', 'Limpar formatação')}
+        <span class="fmt-sep"></span>
+        <button class="fmt fmt-wide" data-pop="margins" title="Margens da folha" aria-label="Margens da folha">${icon('ruler', 18)}<span>Margens</span></button>
       </div>`);
     this.ctx.sub.appendChild(bar);
     this.bar = bar;
@@ -258,6 +271,7 @@ export default class DocViewer {
       const btn = e.target.closest('button');
       if (!btn) return;
       const cmd = btn.dataset.cmd;
+      if (btn.dataset.pop === 'margins') return this.marginPop(btn);
       if (btn.dataset.pop) return this.colorPop(btn, btn.dataset.pop);
       if (cmd === 'image') return this.insertImage();
       if (cmd === 'removeFormat') {
@@ -351,6 +365,63 @@ export default class DocViewer {
   }
 
   // ---------------------------------------------------------------- zoom
+  // ---------------------------------------------------------------- margens da folha (cm)
+  get margins() {
+    return this.ctx.state.docMargin || null;
+  }
+  applyMargins() {
+    const m = this.margins;
+    if (!m) {
+      this.paper.style.padding = '';
+      return;
+    }
+    // em % da largura da folha (A4 = 21 cm), assim fica proporcional no celular também
+    const pct = (cm) => `${((cm / 21) * 100).toFixed(2)}%`;
+    this.paper.style.padding = `${pct(m.t)} ${pct(m.r)} ${pct(m.b)} ${pct(m.l)}`;
+  }
+  marginPop(btn) {
+    const cur = this.margins || DOC_MARGINS[0].m;
+    const same = (a, b) => ['t', 'r', 'b', 'l'].every((k) => Math.abs(a[k] - b[k]) < 0.01);
+    const panel = h(`
+      <div class="tool-panel margin-panel">
+        <div class="tp-title">${icon('ruler', 16)} Margens da folha</div>
+        <div class="doc-margins">
+          ${DOC_MARGINS.map(
+            (p, i) => `<button data-i="${i}" class="${same(cur, p.m) ? 'on' : ''}"><b>${p.label}</b><small>${p.hint}</small></button>`,
+          ).join('')}
+        </div>
+        <div class="tp-label">Personalizada (cm)</div>
+        <div class="margin-inputs">
+          ${[
+            ['t', 'Superior'],
+            ['b', 'Inferior'],
+            ['l', 'Esquerda'],
+            ['r', 'Direita'],
+          ]
+            .map(([k, l]) => `<label><span>${l}</span><input type="number" min="0" max="8" step="0.1" data-k="${k}" value="${cur[k]}"></label>`)
+            .join('')}
+        </div>
+      </div>`);
+    popover(btn, panel, { align: 'end' });
+    const set = (m) => {
+      this.ctx.state.docMargin = m;
+      this.ctx.saveState();
+      this.applyMargins();
+      panel.querySelectorAll('[data-k]').forEach((inp) => (inp.value = m[inp.dataset.k]));
+      panel.querySelectorAll('[data-i]').forEach((b) => b.classList.toggle('on', same(m, DOC_MARGINS[+b.dataset.i].m)));
+    };
+    panel.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-i]');
+      if (b) set({ ...DOC_MARGINS[+b.dataset.i].m });
+    });
+    panel.addEventListener('input', (e) => {
+      const inp = e.target.closest('[data-k]');
+      if (!inp) return;
+      const v = Math.max(0, Math.min(8, parseFloat(String(inp.value).replace(',', '.')) || 0));
+      set({ ...(this.margins || cur), [inp.dataset.k]: v });
+    });
+  }
+
   applyZoom() {
     this.paper.style.zoom = this.zoom;
   }
@@ -372,7 +443,7 @@ export default class DocViewer {
         hint: '.docx',
         run: async () => {
           const { htmlToDocx } = await import('../export/docx-export.js');
-          download(await htmlToDocx(this.paper, { title: name }), `${name}.docx`);
+          download(await htmlToDocx(this.paper, { title: name, margins: this.margins }), `${name}.docx`);
         },
       });
     }
@@ -409,7 +480,7 @@ export default class DocViewer {
     document.body.appendChild(frame);
     const d = frame.contentDocument;
     d.open();
-    d.write(this.standaloneHtml(baseName(this.ctx.rec.name)).replace('</style>', '@page{margin:18mm}body{margin:0;max-width:none}mark,[style*="background"]{-webkit-print-color-adjust:exact;print-color-adjust:exact}</style>'));
+    d.write(this.standaloneHtml(baseName(this.ctx.rec.name)).replace('</style>', `@page{margin:${this.margins ? `${this.margins.t}cm ${this.margins.r}cm ${this.margins.b}cm ${this.margins.l}cm` : '2.5cm'}}body{margin:0;max-width:none}mark,[style*="background"]{-webkit-print-color-adjust:exact;print-color-adjust:exact}</style>`));
     d.close();
     setTimeout(() => {
       frame.contentWindow.focus();

@@ -906,12 +906,16 @@ body.dragging::after {
 }
 .pdf-canvas {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  left: var(--ml, 0);
+  top: var(--mt, 0);
+  width: var(--pw, 100%);
+  height: var(--ph, 100%);
 }
 .pdf-page .textLayer {
   z-index: 2;
+  inset: auto;
+  left: var(--ml, 0);
+  top: var(--mt, 0);
 }
 .textLayer .search-hit {
   background: rgba(255, 170, 0, 0.45);
@@ -2139,9 +2143,10 @@ body > .loading {
 }
 .slide-canvas {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  left: var(--ml, 0);
+  top: var(--mt, 0);
+  width: var(--pw, 100%);
+  height: var(--ph, 100%);
 }
 .slide-block {
   display: flex;
@@ -2695,4 +2700,189 @@ body > .loading {
   .rui-bar {
     justify-content: space-between;
   }
+}
+
+/* ================================================================ margem e imagens */
+.image-page.has-margin {
+  background: #fff;
+}
+.icon-btn.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.margin-panel {
+  width: 300px;
+}
+.tp-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: -6px;
+}
+.margin-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.margin-sides button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-align: left;
+}
+.margin-sides button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* miniatura: folha (cinza) com a margem (tracejada) */
+.ms {
+  width: 26px;
+  height: 34px;
+  border: 1.5px dashed currentColor;
+  border-radius: 3px;
+  position: relative;
+  flex: none;
+  opacity: 0.85;
+}
+.ms::after {
+  content: '';
+  position: absolute;
+  background: currentColor;
+  opacity: 0.35;
+  border-radius: 1px;
+  inset: 0;
+}
+.ms-right::after {
+  right: 40%;
+}
+.ms-lr::after {
+  left: 25%;
+  right: 25%;
+}
+.ms-bottom::after {
+  bottom: 38%;
+}
+.ms-all::after {
+  inset: 22% 22%;
+}
+.img-editor {
+  position: absolute;
+  z-index: 8;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  box-shadow: 0 8px 30px -8px rgba(109, 93, 252, 0.7);
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+.img-editor img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+.ie-handle {
+  position: absolute;
+  right: -12px;
+  bottom: -12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid #fff;
+  cursor: nwse-resize;
+  box-shadow: var(--shadow);
+}
+.ie-bar {
+  position: absolute;
+  top: -48px;
+  right: 0;
+  display: flex;
+  gap: 6px;
+}
+.ie-bar button {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: #1f1f26;
+  color: #fff;
+  font-size: 16px;
+  box-shadow: var(--shadow);
+}
+.ie-bar button[data-a='ok'] {
+  background: var(--accent);
+}
+@media (max-width: 720px) {
+  .tool {
+    width: 33px;
+  }
+  .dock-sep {
+    margin: 0 1px;
+  }
+}
+
+.fmt-wide {
+  width: auto;
+  padding: 0 10px;
+  gap: 6px;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 600;
+}
+.doc-margins {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.doc-margins button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+  text-align: left;
+}
+.doc-margins button b {
+  font-size: 14px;
+}
+.doc-margins button small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.doc-margins button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.doc-margins button.on b {
+  color: var(--accent);
+}
+.margin-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.margin-inputs label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.margin-inputs input {
+  height: 36px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  padding: 0 10px;
+  background: var(--surface-2);
+  color: var(--ink);
 }

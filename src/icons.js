@@ -7,7 +7,7 @@ import {
   Plus, EllipsisVertical, Check, Expand, Shapes, Sparkles, IndentIncrease, IndentDecrease,
   RemoveFormatting, ImagePlus, Printer, FileDown, Contrast, LayoutGrid, Hand, FileMusic,
   Baseline, Save, Library, FolderOpen, Quote, Code, Files, RotateCw, Info, Minimize2, Maximize2,
-  FileType, Columns2, BookMarked, StickyNote, Presentation,
+  FileType, Columns2, BookMarked, StickyNote, Presentation, Ruler, SquareDashed, Move, Scaling,
 } from 'lucide';
 
 const ICONS = {
@@ -28,6 +28,7 @@ const ICONS = {
   save: Save, library: Library, folder: FolderOpen, quote: Quote, code: Code, files: Files,
   rotate: RotateCw, info: Info, minimize: Minimize2, maximize: Maximize2, 'file-type': FileType,
   columns: Columns2, bookmark: BookMarked, sticky: StickyNote, presentation: Presentation,
+  ruler: Ruler, margin: SquareDashed, move: Move, scaling: Scaling,
 };
 
 function attrs(o) {

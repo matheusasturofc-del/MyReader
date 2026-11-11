@@ -30,11 +30,36 @@ const TOOLS = [
   { id: 'eraser', icon: 'eraser', label: 'Borracha', key: 'e' },
   { id: 'text', icon: 'type', label: 'Texto', key: 't' },
   { id: 'shape', icon: 'shapes', label: 'Formas', key: 'r' },
+  { id: 'image', icon: 'image-plus', label: 'Imagem', key: 'i' },
 ];
 
 const SHAPE_ICONS = { rect: 'square', ellipse: 'circle', line: 'minus', arrow: 'arrow' };
 
 let current = null;
+
+const MARGIN_SIZES = [
+  ['none', 'Nenhuma'],
+  ['s', 'Pequena'],
+  ['m', 'Média'],
+  ['l', 'Grande'],
+];
+const MARGIN_SIDES = [
+  ['right', 'Direita'],
+  ['lr', 'Laterais'],
+  ['bottom', 'Embaixo'],
+  ['all', 'Todos os lados'],
+];
+/** Converte a escolha do usuário em unidades (largura da página = 1000). */
+function marginUnits(m) {
+  const v = { none: 0, s: 120, m: 250, l: 420 }[m?.size || 'none'] || 0;
+  const sd = m?.sides || 'lr';
+  return {
+    l: sd === 'lr' || sd === 'all' ? v : 0,
+    r: sd === 'right' || sd === 'lr' || sd === 'all' ? v : 0,
+    t: sd === 'all' ? v * 0.6 : 0,
+    b: sd === 'bottom' ? v * 1.2 : sd === 'all' ? v * 0.6 : 0,
+  };
+}
 
 export async function closeReader() {
   if (!current) return;
@@ -72,6 +97,7 @@ export async function openReader(app, id) {
           <button class="zoom-val" data-act="zoom-fit" title="Ajustar à largura">100%</button>
           <button class="icon-btn sm" data-act="zoom-in" title="Aumentar zoom (+)" aria-label="Aumentar zoom">${icon('zoom-in', 18)}</button>
         </div>
+        <button class="icon-btn" data-act="margin" title="Margem para anotações" aria-label="Margem para anotações" hidden>${icon('margin')}</button>
         <button class="icon-btn" data-act="reading" title="Modo leitura (L)" aria-label="Modo leitura">${icon('book')}</button>
         <button class="icon-btn hide-sm" data-act="theme" title="Tema claro/escuro" aria-label="Alternar tema">${icon(getTheme() === 'dark' ? 'sun' : 'moon')}</button>
         <button class="btn btn-primary btn-sm" data-act="export">${icon('download', 17)}<span class="hide-sm">Salvar</span></button>
@@ -116,6 +142,8 @@ export async function openReader(app, id) {
   };
 
   const ann = new AnnotationManager({ tools, history, pages: state.annotations, onChange: saveState, scroller: stage });
+  // margem para anotações (escolhida pelo usuário) — aplicada antes de montar o visualizador
+  ann.setMargin(marginUnits(state.margin));
 
   const ctx = {
     rec,
@@ -295,6 +323,10 @@ export async function openReader(app, id) {
 
   function openToolSettings(anchor) {
     const t = tools.tool;
+    if (t === 'image') {
+      toast('Toque na página onde quer colocar a imagem. Toque numa imagem para mover, redimensionar ou apagar.', { timeout: 4500 });
+      return;
+    }
     if (t === 'read') {
       toast('Escolha uma ferramenta: caneta, marca-texto, texto…');
       return;
@@ -393,6 +425,7 @@ export async function openReader(app, id) {
     const act = b.dataset.act;
     if (act === 'back') go(getLastList());
     if (act === 'reading') enterReading();
+    if (act === 'margin') openMarginPanel(b);
     if (act === 'theme') {
       toggleTheme();
       b.innerHTML = icon(getTheme() === 'dark' ? 'sun' : 'moon');
@@ -527,6 +560,48 @@ export async function openReader(app, id) {
     viewer?.onKey?.(e);
   };
   document.addEventListener('keydown', onKey);
+
+  // ---------------------------------------------------------- margem para anotações
+  const marginBtn = root.querySelector('[data-act="margin"]');
+  if (viewer?.setMargin) marginBtn.hidden = false;
+  marginBtn.classList.toggle('on', !!state.margin && state.margin.size !== 'none');
+  function openMarginPanel(anchor) {
+    const cur = state.margin || { size: 'none', sides: 'lr' };
+    const panel = h(`
+      <div class="tool-panel margin-panel">
+        <div class="tp-title">${icon('margin', 16)} Margem para anotações</div>
+        <p class="tp-hint">Cria espaço em branco em volta da página para escrever. Suas anotações continuam no lugar.</p>
+        <div class="tp-label">Tamanho</div>
+        <div class="seg">${MARGIN_SIZES.map(([k, l]) => `<button data-size="${k}" class="${cur.size === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+        <div class="tp-label">Onde</div>
+        <div class="margin-sides">${MARGIN_SIDES.map(([k, l]) => `<button data-sides="${k}" class="${cur.sides === k ? 'on' : ''}"><i class="ms ms-${k}"></i><span>${l}</span></button>`).join('')}</div>
+      </div>`);
+    popover(anchor, panel, { align: 'end' });
+    panel.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      const next = { ...cur };
+      if (b.dataset.size) next.size = b.dataset.size;
+      if (b.dataset.sides) {
+        next.sides = b.dataset.sides;
+        if (next.size === 'none') next.size = 'm';
+      }
+      applyMargin(next);
+      panel.querySelectorAll('[data-size]').forEach((x) => x.classList.toggle('on', x.dataset.size === next.size));
+      panel.querySelectorAll('[data-sides]').forEach((x) => x.classList.toggle('on', x.dataset.sides === next.sides));
+      Object.assign(cur, next);
+    });
+  }
+  function applyMargin(m) {
+    state.margin = m;
+    saveState();
+    marginBtn.classList.toggle('on', m.size !== 'none');
+    ann.setMargin(marginUnits(m));
+    const r = viewer?.setMargin?.();
+    const done = () => ann.resizeAll();
+    if (r?.then) r.then(done);
+    else requestAnimationFrame(done);
+  }
 
   // ---------------------------------------------------------- cor do papel
   function setPaper(p) {

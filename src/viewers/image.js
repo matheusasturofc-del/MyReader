@@ -1,6 +1,7 @@
 // Imagens (PNG, JPG, WebP, GIF, SVG...) com anotações e exportação.
 import { h, download, baseName, canvasToBlob, loadImage } from '../util.js';
 import { compositeAnnotations, pagesToPdf } from '../export/pdf-export.js';
+import { ensureImages } from '../annotations.js';
 
 export default class ImageViewer {
   annotatable = true;
@@ -38,12 +39,21 @@ export default class ImageViewer {
     const availH = st.clientHeight - 140;
     const { w, h: hh } = this.natural;
     // "100%" = cabe na tela (largura e altura), sem ampliar imagens pequenas demais.
-    const fit = Math.min(availW / w, Math.max(availH, 360) / hh, Math.max(1, 600 / w));
+    const m = this.ctx.ann.margin;
+    const fx = 1 + (m.l + m.r) / 1000; // a margem também precisa caber
+    const fit = Math.min(availW / (w * fx), Math.max(availH, 360) / hh, Math.max(1, 600 / w));
     const W = Math.round(w * fit * this.zoom);
-    this.host.style.width = `${W}px`;
-    this.host.style.height = `${Math.round((W * hh) / w)}px`;
+    const H = Math.round((W * hh) / w);
+    const k = W / 1000;
+    this.host.style.width = `${Math.round(W + (m.l + m.r) * k)}px`;
+    this.host.style.height = `${Math.round(H + (m.t + m.b) * k)}px`;
+    Object.assign(this.img.style, { position: 'absolute', left: `${m.l * k}px`, top: `${m.t * k}px`, width: `${W}px`, height: `${H}px` });
+    this.host.classList.toggle('has-margin', m.l + m.r + m.t + m.b > 0);
   }
 
+  setMargin() {
+    this.layout();
+  }
   setZoom(z) {
     this.zoom = z;
     this.ctx.state.zoom = z;
@@ -71,12 +81,19 @@ export default class ImageViewer {
     const k = Math.min(1, maxSide / Math.max(w, hh));
     w = Math.round(w * k);
     hh = Math.round(hh * k);
+    const m = this.ctx.ann.margin;
+    const u = w / 1000;
     const c = document.createElement('canvas');
-    c.width = w;
-    c.height = hh;
+    c.width = Math.round(w + (m.l + m.r) * u);
+    c.height = Math.round(hh + (m.t + m.b) * u);
     const x = c.getContext('2d');
-    x.drawImage(this.img, 0, 0, w, hh);
-    compositeAnnotations(x, this.ctx.ann.pages.img, w, hh);
+    if (m.l + m.r + m.t + m.b > 0) {
+      x.fillStyle = '#fff';
+      x.fillRect(0, 0, c.width, c.height);
+    }
+    x.drawImage(this.img, m.l * u, m.t * u, w, hh);
+    await ensureImages(this.ctx.ann.pages);
+    compositeAnnotations(x, this.ctx.ann.pages.img, c.width, c.height, m);
     return c;
   }
 

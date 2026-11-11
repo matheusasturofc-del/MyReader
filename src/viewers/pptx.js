@@ -5,7 +5,7 @@ import JSZip from 'jszip';
 import { h, esc, download, baseName } from '../util.js';
 import { icon } from '../icons.js';
 import { pagesToPdf, compositeAnnotations } from '../export/pdf-export.js';
-import { renderShapesToCanvases } from '../annotations.js';
+import { renderShapesToCanvases, ensureImages } from '../annotations.js';
 
 const EMU_PT = 12700;
 
@@ -841,18 +841,31 @@ export default class PptxViewer {
   }
 
   get width() {
-    return Math.min(1100, this.ctx.stage.clientWidth - (innerWidth < 720 ? 16 : 64)) * this.zoom;
+    const m = this.ctx.ann.margin;
+    return (Math.min(1100, this.ctx.stage.clientWidth - (innerWidth < 720 ? 16 : 64)) / (1 + (m.l + m.r) / 1000)) * this.zoom;
   }
 
   layout() {
     const W = Math.round(this.width);
     const H = Math.round(W * this.ratio);
-    this.blocks.forEach((b) => (b.style.width = `${W}px`));
+    const m = this.ctx.ann.margin;
+    const k = W / 1000;
+    const TW = Math.round(W + (m.l + m.r) * k);
+    this.blocks.forEach((b) => (b.style.width = `${TW}px`));
     this.hosts.forEach((hh) => {
-      hh.style.width = `${W}px`;
-      hh.style.height = `${H}px`;
+      hh.style.width = `${TW}px`;
+      hh.style.height = `${Math.round(H + (m.t + m.b) * k)}px`;
+      hh.style.setProperty('--ml', `${m.l * k}px`);
+      hh.style.setProperty('--mt', `${m.t * k}px`);
+      hh.style.setProperty('--pw', `${W}px`);
+      hh.style.setProperty('--ph', `${H}px`);
     });
     this.W = W;
+  }
+
+  setMargin() {
+    this.layout();
+    this.rerender();
   }
 
   async drawTo(i, ctx2d, pxW) {
@@ -1001,12 +1014,19 @@ export default class PptxViewer {
         icon: 'file-down',
         hint: '.pdf',
         run: async () => {
+          const m = this.ctx.ann.margin;
+          const u = W / 1000;
+          await ensureImages(this.ctx.ann.pages);
           const pages = this.pptx.slides.map((_, i) => ({
-            width: W,
-            height: H,
+            width: W + (m.l + m.r) * u,
+            height: H + (m.t + m.b) * u,
             draw: async (x, pw, ph) => {
-              await this.drawTo(i, x, pw);
-              compositeAnnotations(x, this.ctx.ann.pages[`sl${i + 1}`], pw, ph);
+              const sc = pw / (W + (m.l + m.r) * u); // px por pt
+              x.save();
+              x.translate(m.l * u * sc, m.t * u * sc);
+              await this.drawTo(i, x, W * sc);
+              x.restore();
+              compositeAnnotations(x, this.ctx.ann.pages[`sl${i + 1}`], pw, ph, m);
             },
           }));
           download(await pagesToPdf(pages, 2), `${name}.pdf`);

@@ -48,7 +48,8 @@ export default class MusicXmlViewer {
 
   applyWidth() {
     const avail = this.ctx.stage.clientWidth - (innerWidth < 720 ? 16 : 64);
-    this.el.style.width = `${Math.min(avail, 900) * this.zoom}px`;
+    const m = this.ctx.ann.margin;
+    this.el.style.width = `${(Math.min(avail, 900) * this.zoom) / (1 + (m.l + m.r) / 1000)}px`;
   }
 
   render() {
@@ -62,12 +63,19 @@ export default class MusicXmlViewer {
     const { ann } = this.ctx;
     [...ann.layers.keys()].forEach((k) => ann.detach(k));
     const svgs = [...this.el.querySelectorAll('svg')];
+    const m = ann.margin;
     this.pageEls = svgs.map((svg, i) => {
       const host = svg.parentElement;
       host.classList.add('page-host', 'score-page');
+      const k = (svg.width.baseVal.value || svg.clientWidth) / 1000;
+      host.style.padding = `${m.t * k}px ${m.r * k}px ${m.b * k}px ${m.l * k}px`;
       ann.attach(host, `s${i + 1}`);
       return host;
     });
+  }
+
+  setMargin() {
+    this.render();
   }
 
   setZoom(z) {
@@ -236,12 +244,15 @@ export default class MusicXmlViewer {
         hint: '.pdf',
         run: async () => {
           const imgs = await this.pageImages();
+          const m = this.ctx.ann.margin;
+          const fx = 1 + (m.l + m.r) / 1000;
           const pages = imgs.map(({ img, w, h: hh, key }) => ({
             width: 595,
-            height: (595 * hh) / w,
+            height: (595 * (hh + ((m.t + m.b) * w) / 1000)) / (w * fx),
             draw: (x, pw, ph) => {
-              x.drawImage(img, 0, 0, pw, ph);
-              compositeAnnotations(x, this.ctx.ann.pages[key], pw, ph);
+              const u = pw / fx / 1000; // px por unidade
+              x.drawImage(img, m.l * u, m.t * u, 1000 * u, (1000 * u * hh) / w);
+              compositeAnnotations(x, this.ctx.ann.pages[key], pw, ph, m);
             },
           }));
           download(await pagesToPdf(pages, 3), `${name}.pdf`);

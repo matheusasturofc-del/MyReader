@@ -5,7 +5,7 @@ import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import './pdf-textlayer.css';
 import { h, esc, download, baseName, clamp, debounce, canvasToBlob } from '../util.js';
 import { icon } from '../icons.js';
-import { rangeToRects, renderShapesToCanvases, PALETTES } from '../annotations.js';
+import { renderShapesToCanvases, ensureImages, PALETTES } from '../annotations.js';
 import { showSelectionMenu, hideSelectionMenu, dialog, toast } from '../ui.js';
 import { exportAnnotatedPdf } from '../export/pdf-export.js';
 
@@ -77,7 +77,12 @@ export default class PdfViewer {
   // ---------------------------------------------------------------- layout & render
   get fitScale() {
     const avail = this.ctx.stage.clientWidth - (innerWidth < 720 ? 16 : 64);
-    return clamp(avail, 200, 1000) / this.base.w;
+    const m = this.ctx.ann.margin;
+    // a página + margem cabem na largura disponível
+    return clamp(avail, 200, 1000) / (this.base.w * (1 + (m.l + m.r) / 1000));
+  }
+  setMargin() {
+    this.onResize();
   }
   get scale() {
     return this.fitScale * this.zoom;
@@ -86,8 +91,16 @@ export default class PdfViewer {
     const s = this.scale;
     for (const p of this.pages) {
       const d = p.dims || this.base;
-      p.el.style.width = `${Math.floor(d.w * s)}px`;
-      p.el.style.height = `${Math.floor(d.h * s)}px`;
+      const m = this.ctx.ann.margin;
+      const pw = Math.floor(d.w * s),
+        ph = Math.floor(d.h * s);
+      const k = pw / 1000;
+      p.el.style.width = `${Math.round(pw + (m.l + m.r) * k)}px`;
+      p.el.style.height = `${Math.round(ph + (m.t + m.b) * k)}px`;
+      p.el.style.setProperty('--ml', `${m.l * k}px`);
+      p.el.style.setProperty('--mt', `${m.t * k}px`);
+      p.el.style.setProperty('--pw', `${pw}px`);
+      p.el.style.setProperty('--ph', `${ph}px`);
       p.el.style.setProperty('--scale-factor', s);
       p.el.style.setProperty('--total-scale-factor', s);
     }
@@ -322,7 +335,7 @@ export default class PdfViewer {
     if (!touched.length) return;
     const apply = (color) => {
       for (const p of touched) {
-        const rects = rangeToRects(range, p.el);
+        const rects = this.ctx.ann.rectsFor(`p${p.n}`, range);
         if (rects.length) this.ctx.ann.add(`p${p.n}`, { t: 'hlrect', c: color, rects });
       }
       sel.removeAllRanges();
@@ -439,7 +452,7 @@ export default class PdfViewer {
         icon: 'file-down',
         hint: '.pdf',
         run: async () => {
-          const blob = await exportAnnotatedPdf({ bytes: this.bytes, pdfjsDoc: this.pdf, annotations: this.ctx.ann.pages });
+          const blob = await exportAnnotatedPdf({ bytes: this.bytes, pdfjsDoc: this.pdf, annotations: this.ctx.ann.pages, margin: this.ctx.ann.margin });
           download(blob, `${name} (anotado).pdf`);
         },
       },
@@ -451,13 +464,18 @@ export default class PdfViewer {
           const n = this.current || 1;
           const page = await this.pdf.getPage(n);
           const vp = page.getViewport({ scale: 2.5 });
+          const m = this.ctx.ann.margin;
+          const k = vp.width / 1000;
           const c = document.createElement('canvas');
-          c.width = vp.width;
-          c.height = vp.height;
-          await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
-          const shapes = this.ctx.ann.pages[`p${n}`] || [];
-          const { hl, ink } = renderShapesToCanvases(shapes, c.width, c.height);
+          c.width = Math.round(vp.width + (m.l + m.r) * k);
+          c.height = Math.round(vp.height + (m.t + m.b) * k);
           const x = c.getContext('2d');
+          x.fillStyle = '#fff';
+          x.fillRect(0, 0, c.width, c.height);
+          await page.render({ canvasContext: x, viewport: vp, transform: [1, 0, 0, 1, m.l * k, m.t * k] }).promise;
+          await ensureImages(this.ctx.ann.pages);
+          const shapes = this.ctx.ann.pages[`p${n}`] || [];
+          const { hl, ink } = renderShapesToCanvases(shapes, c.width, c.height, m);
           x.globalCompositeOperation = 'multiply';
           x.drawImage(hl, 0, 0);
           x.globalCompositeOperation = 'source-over';
